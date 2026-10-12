@@ -108,3 +108,37 @@ To build the production frontend bundle:
 cd client
 npm run build
 ```
+
+---
+
+## Curated Starred Repositories by Field
+
+### Software Development
+- [freeCodeCamp/freeCodeCamp](https://github.com/freeCodeCamp/freeCodeCamp)
+- [EbookFoundation/free-programming-books](https://github.com/EbookFoundation/free-programming-books)
+- [firstcontributions/first-contributions](https://github.com/firstcontributions/first-contributions)
+
+### AI Tools
+- [langchain-ai/langchain](https://github.com/langchain-ai/langchain)
+- [microsoft/semantic-kernel](https://github.com/microsoft/semantic-kernel)
+- [Significant-Gravitas/AutoGPT](https://github.com/Significant-Gravitas/AutoGPT)
+
+### Frontend Tools
+- [vuejs/core](https://github.com/vuejs/core)
+- [vitejs/vite](https://github.com/vitejs/vite)
+- [tailwindlabs/tailwindcss](https://github.com/tailwindlabs/tailwindcss)
+
+### AI & Machine Learning
+- [scikit-learn/scikit-learn](https://github.com/scikit-learn/scikit-learn)
+- [tensorflow/tensorflow](https://github.com/tensorflow/tensorflow)
+- [pytorch/pytorch](https://github.com/pytorch/pytorch)
+
+### Data Analytics
+- [pandas-dev/pandas](https://github.com/pandas-dev/pandas)
+- [apache/superset](https://github.com/apache/superset)
+- [duckdb/duckdb](https://github.com/duckdb/duckdb)
+
+### Cybersecurity
+- [OWASP/CheatSheetSeries](https://github.com/OWASP/CheatSheetSeries)
+- [OWASP/Top10](https://github.com/OWASP/Top10)
+- [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei)
