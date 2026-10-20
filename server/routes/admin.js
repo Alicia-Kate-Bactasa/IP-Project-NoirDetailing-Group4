@@ -1,5 +1,5 @@
 /**
- * Admin Management API Router for Montage Auto Studio.
+ * Admin Management API Router for Noir Detailing.
  * Provides endpoints for administrative booking management, invoice history retrieval,
  * subscription roster monitoring, walk-in counter booking creation, and dashboard statistics.
  */

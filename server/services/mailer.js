@@ -1,5 +1,5 @@
 /**
- * Email Notification & HTML Receipt Service for Montage Auto Studio.
+ * Email Notification & HTML Receipt Service for Noir Detailing.
  * Handles Nodemailer SMTP setup, responsive HTML templates, fallback mail simulation logging,
  * and automated email notifications (invoices, OTP codes, booking confirmations, cancellations, subscriptions).
  */
@@ -48,7 +48,7 @@ const getTransporter = () => {
  */
 const sendMailHelper = async ({ to, subject, htmlContent, tag }) => {
 
-  const from = process.env.SMTP_FROM || `"Montage Auto Studio" <${process.env.SMTP_USER || 'bactasa.kate.2006@gmail.com'}>`;
+  const from = process.env.SMTP_FROM || `"Noir Detailing" <${process.env.SMTP_USER || 'bactasa.kate.2006@gmail.com'}>`;
   const transporter = getTransporter();
 
   if (transporter && to) {
@@ -87,7 +87,7 @@ const renderWrapper = ({ title, statusBadge, statusColor, contentHtml }) => `
   <div style="max-width:600px; margin:20px auto; background-color:#ffffff; border:1px solid #E5E5E5; border-radius:24px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.04);">
     <!-- Brand Header -->
     <div style="background-color:#111111; padding:32px 30px; text-align:center; color:#ffffff;">
-      <span style="font-size:10px; font-weight:700; letter-spacing:3px; text-transform:uppercase; color:#A3A3A3; display:block; margin-bottom:6px;">Montage Auto Studio</span>
+      <span style="font-size:10px; font-weight:700; letter-spacing:3px; text-transform:uppercase; color:#A3A3A3; display:block; margin-bottom:6px;">Noir Detailing</span>
       <h1 style="margin:0; font-size:22px; font-weight:900; letter-spacing:1px; text-transform:uppercase; color:#ffffff;">${title}</h1>
       ${statusBadge ? `
         <div style="margin-top:14px;">
@@ -103,9 +103,9 @@ const renderWrapper = ({ title, statusBadge, statusColor, contentHtml }) => `
 
     <!-- Brand Footer -->
     <div style="background-color:#F5F5F5; padding:24px 30px; border-top:1px solid #E5E5E5; text-align:center; font-size:11px; color:#737373; line-height:1.6;">
-      <strong style="color:#111111; font-weight:700; text-transform:uppercase; letter-spacing:1px;">Montage Auto Studio</strong><br>
+      <strong style="color:#111111; font-weight:700; text-transform:uppercase; letter-spacing:1px;">Noir Detailing</strong><br>
       Banilad, Mandaue City, Cebu, Philippines • Mon–Sat: 9:00 AM – 5:00 PM<br>
-      © 2026 Montage Auto Studio. All Rights Reserved.
+      © 2026 Noir Detailing. All Rights Reserved.
     </div>
   </div>
 </body>
@@ -170,7 +170,7 @@ const sendPaymentSuccessInvoiceEmail = async ({ to, clientName, invoiceId, booki
 
   return sendMailHelper({
     to,
-    subject: `Official Payment Invoice INV-${invoiceId} — Montage Auto Studio`,
+    subject: `Official Payment Invoice INV-${invoiceId} — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Payment Invoice Receipt',
       statusBadge: 'PAID & VERIFIED',
@@ -202,7 +202,7 @@ const sendBookingCompletedEmail = async ({ to, clientName, invoiceId, bookingId,
 
   return sendMailHelper({
     to,
-    subject: `Booking Confirmed MTG-${bookingId} — Montage Auto Studio`,
+    subject: `Booking Confirmed MTG-${bookingId} — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Appointment Confirmed',
       statusBadge: 'CONFIRMED SLOT',
@@ -232,7 +232,7 @@ const sendPaymentFailedEmail = async ({ to, clientName, bookingId, invoiceId, se
 
   return sendMailHelper({
     to,
-    subject: `Payment Unsuccessful MTG-${bookingId || 'ERR'} — Montage Auto Studio`,
+    subject: `Payment Unsuccessful MTG-${bookingId || 'ERR'} — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Payment Failed',
       statusBadge: 'PAYMENT UNPAID',
@@ -264,7 +264,7 @@ const sendRegistrationSuccessEmail = async ({ to, clientName, invoiceId, email, 
 
   return sendMailHelper({
     to,
-    subject: `VIP Membership Activated INV-${invoiceId} — Montage Auto Studio`,
+    subject: `VIP Membership Activated INV-${invoiceId} — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'VIP Account Opened',
       statusBadge: 'MEMBERSHIP ACTIVE',
@@ -292,7 +292,7 @@ const sendRegistrationFailedEmail = async ({ to, clientName, reason }) => {
 
   return sendMailHelper({
     to,
-    subject: `Registration Unsuccessful — Montage Auto Studio`,
+    subject: `Registration Unsuccessful — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Registration Cancelled',
       statusBadge: 'ACCOUNT NOT OPENED',
@@ -309,7 +309,7 @@ const sendRegistrationFailedEmail = async ({ to, clientName, reason }) => {
 const sendPasswordResetOtpEmail = async ({ to, otp }) => {
   const contentHtml = `
     <p style="font-size:14px; margin:0 0 16px 0; line-height:1.6; color:#333333;">
-      We received a password reset request for your Montage Auto Studio member account. Please use the 6-digit verification code below:
+      We received a password reset request for your Noir Detailing member account. Please use the 6-digit verification code below:
     </p>
 
     <div style="background-color:#F8F9FA; border:2px solid #111111; border-radius:16px; padding:24px; margin:24px 0; text-align:center;">
@@ -322,7 +322,7 @@ const sendPasswordResetOtpEmail = async ({ to, otp }) => {
 
   return sendMailHelper({
     to,
-    subject: `Password Reset OTP Code — Montage Auto Studio`,
+    subject: `Password Reset OTP Code — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Password Reset',
       statusBadge: 'VERIFICATION CODE',
@@ -353,7 +353,7 @@ const sendRescheduleEmail = async ({ to, clientName, bookingId, invoiceId, servi
 
   return sendMailHelper({
     to,
-    subject: `Reschedule Confirmation MTG-${bookingId} — Montage Auto Studio`,
+    subject: `Reschedule Confirmation MTG-${bookingId} — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Booking Rescheduled',
       statusBadge: 'RESCHEDULED',
@@ -379,7 +379,7 @@ const sendUserCancelBookingEmail = async ({ to, clientName, bookingId, invoiceId
 
   return sendMailHelper({
     to,
-    subject: `Booking Cancellation MTG-${bookingId} — Montage Auto Studio`,
+    subject: `Booking Cancellation MTG-${bookingId} — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Booking Cancelled',
       statusBadge: 'CANCELLED BY USER',
@@ -441,7 +441,7 @@ const sendAdminCompleteBookingEmail = async ({ to, clientName, bookingId, invoic
 
   return sendMailHelper({
     to,
-    subject: `Service Completed MTG-${bookingId} — Montage Auto Studio`,
+    subject: `Service Completed MTG-${bookingId} — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Service Completed',
       statusBadge: 'COMPLETED',
@@ -474,7 +474,7 @@ const sendWalkInBookingEmail = async ({ to, clientName, bookingId, invoiceId, se
 
   return sendMailHelper({
     to,
-    subject: `Walk-In Studio Receipt MTG-${bookingId} — Montage Auto Studio`,
+    subject: `Walk-In Studio Receipt MTG-${bookingId} — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Walk-In Appointment',
       statusBadge: 'WALK-IN LOGGED',
@@ -534,7 +534,7 @@ const sendSubscriptionCancelledEmail = async ({ to, clientName, subscriptionId }
 
   return sendMailHelper({
     to,
-    subject: `VIP Subscription Cancelled — Montage Auto Studio`,
+    subject: `VIP Subscription Cancelled — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Subscription Cancelled',
       statusBadge: 'CANCELLED',
@@ -563,7 +563,7 @@ const sendSubscriptionReactivatedEmail = async ({ to, clientName, subscriptionId
 
   return sendMailHelper({
     to,
-    subject: `VIP Subscription Reactivated — Montage Auto Studio`,
+    subject: `VIP Subscription Reactivated — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Subscription Active',
       statusBadge: 'REACTIVATED',

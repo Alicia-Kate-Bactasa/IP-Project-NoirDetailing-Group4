@@ -1,5 +1,5 @@
 /**
- * Main Express backend server entrypoint for Montage Auto Studio.
+ * Main Express backend server entrypoint for Noir Detailing.
  * Initializes core security middleware, API route handlers, health check, global error handling, and HTTP listener.
  */
 
@@ -63,7 +63,7 @@ const authLimiter = rateLimit({
 app.get(`${API_PREFIX}/health`, (req, res) => {
   return res.status(200).json({
     status: 'ok',
-    service: 'Montage Auto Studio API',
+    service: 'Noir Detailing API',
     timestamp: new Date().toISOString()
   });
 });
@@ -113,7 +113,7 @@ app.use((err, req, res, next) => {
 // Server listener start block
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`🚀 Montage Auto Studio API Server running on http://localhost:${PORT} (${NODE_ENV})`);
+    console.log(`🚀 Noir Detailing API Server running on http://localhost:${PORT} (${NODE_ENV})`);
   });
 }
 

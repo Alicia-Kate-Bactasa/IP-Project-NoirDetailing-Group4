@@ -1,5 +1,5 @@
 /**
- * Vite configuration for Montage Auto Studio.
+ * Vite configuration for Noir Detailing.
  * Handles Vue plugin registration, path aliases (@ -> ./src), dev server port, and API proxies.
  */
 import { defineConfig } from 'vite';

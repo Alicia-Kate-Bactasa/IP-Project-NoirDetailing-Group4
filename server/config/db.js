@@ -1,5 +1,5 @@
 /**
- * Database client configuration module for Montage Auto Studio.
+ * Database client configuration module for Noir Detailing.
  * Instantiates and exports the shared Prisma ORM client with environment-aware query logging.
  */
 

@@ -1,5 +1,5 @@
 /**
- * Customer Feedback API Router for Montage Auto Studio.
+ * Customer Feedback API Router for Noir Detailing.
  * Handles feedback submission, booking verification for review eligibility, and retrieval of customer ratings.
  */
 

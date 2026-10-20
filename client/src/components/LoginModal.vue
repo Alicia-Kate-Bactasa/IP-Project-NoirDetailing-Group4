@@ -1,5 +1,5 @@
 <!--
-  Login & Account Registration Modal Component for Montage Auto Studio.
+  Login & Account Registration Modal Component for Noir Detailing.
   Provides smooth sliding tabbed authentication interface for member sign-in and user account registration with PayMongo pre-checkout redirection.
 -->
 <template>
@@ -23,7 +23,7 @@
                 {{ isRegister ? 'Register Account' : 'Member Access' }}
               </h3>
               <p class="text-xs text-neutral-400 font-medium mt-1">
-                {{ isRegister ? 'Create your new Montage Studio account' : 'Sign in with your registered credentials' }}
+                {{ isRegister ? 'Create your new Noir Detailing account' : 'Sign in with your registered credentials' }}
               </p>
             </div>
           </Transition>

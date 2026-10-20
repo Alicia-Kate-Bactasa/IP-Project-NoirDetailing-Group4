@@ -1,7 +1,7 @@
 {
-  "name": "montage-auto-studio-api",
+  "name": "noir-detailing-api",
   "version": "1.0.0",
-  "description": "Express.js API server for Montage Auto Studio",
+  "description": "Express.js API server for Noir Detailing",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

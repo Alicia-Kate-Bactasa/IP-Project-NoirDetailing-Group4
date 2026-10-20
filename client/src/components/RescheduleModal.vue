@@ -1,5 +1,5 @@
 <!--
-  Booking Reschedule Modal Component for Montage Auto Studio.
+  Booking Reschedule Modal Component for Noir Detailing.
   Provides live interactive studio calendar and dynamic time slot grid matching the primary booking wizard.
 -->
 <template>

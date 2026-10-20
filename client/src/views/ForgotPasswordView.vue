@@ -1,5 +1,5 @@
 <!--
-  Forgot Password View Component for Montage Auto Studio.
+  Forgot Password View Component for Noir Detailing.
   3-step password recovery flow: 1) Email address submission, 2) 6-digit OTP code verification, 3) New password update.
 -->
 <template>
@@ -7,8 +7,8 @@
     <div class="bg-white p-8 w-full max-w-sm rounded-[2rem] shadow-2xl border border-neutral-100 relative mx-4">
       <div class="flex justify-center mb-6">
         <router-link to="/" class="flex flex-col items-center">
-          <span class="text-xs font-black uppercase tracking-[0.25em] text-neutral-800">Montage</span>
-          <span class="text-[8px] font-bold uppercase tracking-[0.4em] text-neutral-400 mt-1">Auto Studio</span>
+          <span class="text-xs font-black uppercase tracking-[0.25em] text-neutral-800">Noir</span>
+          <span class="text-[8px] font-bold uppercase tracking-[0.4em] text-neutral-400 mt-1">Detailing</span>
         </router-link>
       </div>
 

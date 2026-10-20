@@ -1,5 +1,5 @@
 /**
- * Service Catalog Management API Router for Montage Auto Studio.
+ * Service Catalog Management API Router for Noir Detailing.
  * Handles fetching available detailing packages, package updates, new package creations,
  * soft deactivations, and activation status toggling by administrators.
  */

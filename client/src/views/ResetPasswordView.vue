@@ -1,5 +1,5 @@
 <!--
-  Reset Password View Component for Montage Auto Studio.
+  Reset Password View Component for Noir Detailing.
   Form view for choosing a new password after a successfully verified OTP.
   Reads the verified email + OTP from session storage (set by ForgotPasswordView)
   and redirects to the forgot-password flow when they are not present.
@@ -9,14 +9,14 @@
     <div class="bg-white p-8 w-full max-w-sm rounded-[2rem] shadow-2xl border border-neutral-100 relative mx-4">
       <div class="flex justify-center mb-6">
         <router-link to="/" class="flex flex-col items-center">
-          <span class="text-xs font-black uppercase tracking-[0.25em] text-neutral-800">Montage</span>
-          <span class="text-[8px] font-bold uppercase tracking-[0.4em] text-neutral-400 mt-1">Auto Studio</span>
+          <span class="text-xs font-black uppercase tracking-[0.25em] text-neutral-800">Noir</span>
+          <span class="text-[8px] font-bold uppercase tracking-[0.4em] text-neutral-400 mt-1">Detailing</span>
         </router-link>
       </div>
 
       <div class="text-center mb-6">
         <h3 class="text-lg font-bold uppercase tracking-tight font-black">Choose New Password</h3>
-        <p class="text-xs text-neutral-400 font-normal mt-1.5 leading-relaxed">Please choose a secure new password for your Montage Auto Studio account.</p>
+        <p class="text-xs text-neutral-400 font-normal mt-1.5 leading-relaxed">Please choose a secure new password for your Noir Detailing account.</p>
       </div>
 
       <form @submit.prevent="handleResetPassword" class="space-y-4">

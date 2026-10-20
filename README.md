@@ -1,6 +1,6 @@
-# Montage Auto Studio
+# Noir Detailing
 
-Montage Auto Studio is a full-stack auto detailing reservation and VIP membership subscription web application built with Express.js backend and Vue.js 3 frontend, powered by Prisma ORM and Neon PostgreSQL database integration.
+Noir Detailing is a full-stack auto detailing reservation and VIP membership subscription web application built with Express.js backend and Vue.js 3 frontend, powered by Prisma ORM and Neon PostgreSQL database integration.
 
 ---
 
@@ -28,7 +28,7 @@ Montage Auto Studio is a full-stack auto detailing reservation and VIP membershi
 
 ## System Overview
 
-Montage Auto Studio offers structured auto detailing scheduling and membership management with distinct workflows:
+Noir Detailing offers structured auto detailing scheduling and membership management with distinct workflows:
 
 - **Guest Booking Wizard**: Allows walk-in and guest customers to browse active detailing packages, select service durations, check studio bay availability in real time, and proceed through online checkout.
 - **VIP Subscriber Hub**: Enables active subscribers to book complimentary detailing sessions with 0 PHP per-session transaction invoices, manage billing cycles, reschedule, or cancel appointments.
@@ -40,7 +40,7 @@ Montage Auto Studio offers structured auto detailing scheduling and membership m
 ## Repository Structure
 
 ```text
-montageAutoStudio/
+noirDetailing/
 ├── client/                      # Frontend Web Application (Vue.js 3, Vite, Tailwind CSS)
 │   ├── src/
 │   │   ├── components/          # Reusable UI components (ServiceSelector, Modals)

@@ -1,5 +1,5 @@
 <!--
-  Member Dashboard View Component for Montage Auto Studio.
+  Member Dashboard View Component for Noir Detailing.
   Provides authenticated member workspace featuring account overview, ₱0.00 VIP booking reservation,
   rescheduling, cancellation, and subscription plan status monitoring.
 -->
@@ -15,7 +15,7 @@
       <div class="space-y-8">
         <div class="pb-4 border-b border-neutral-800 flex justify-between items-center relative">
           <div v-if="!isSidebarCollapsed" class="overflow-hidden whitespace-nowrap">
-            <div class="text-lg font-bold uppercase tracking-wider text-white">Montage Studio</div>
+            <div class="text-lg font-bold uppercase tracking-wider text-white">Noir Detailing</div>
             <div class="text-xs text-neutral-400 tracking-widest uppercase font-mono mt-1.5">Member Hub</div>
           </div>
           <button 

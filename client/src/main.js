@@ -1,5 +1,5 @@
 /**
- * Vue 3 entrypoint module for Montage Auto Studio.
+ * Vue 3 entrypoint module for Noir Detailing.
  * Initializes the root app, registers global plugins (@vueuse/motion, Vue Router), and mounts to the DOM.
  */
 

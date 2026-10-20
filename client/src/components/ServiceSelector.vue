@@ -1,5 +1,5 @@
 <!--
-  Custom Service Selector Component for Montage Auto Studio.
+  Custom Service Selector Component for Noir Detailing.
   Renders a custom dropdown menu for selecting detailing packages, formatting durations and VIP/regular pricing.
 -->
 <template>

@@ -1,5 +1,5 @@
 /**
- * VIP Subscriptions API Router for Montage Auto Studio.
+ * VIP Subscriptions API Router for Noir Detailing.
  * Handles VIP membership roster monitoring, member status checks (/me),
  * subscription plan renewals, cancellations, reactivations, and admin status updates.
  */

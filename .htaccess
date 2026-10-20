@@ -1,4 +1,4 @@
-# Apache Configuration for Montage Auto Studio
+# Apache Configuration for Noir Detailing
 # Serves compiled production frontend files from client/dist/ with Vue Router history fallback support
 
 DirectoryIndex client/dist/index.html index.html

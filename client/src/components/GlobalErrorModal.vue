@@ -1,5 +1,5 @@
 <!--
-  Global Error & Notification Modal Component for Montage Auto Studio.
+  Global Error & Notification Modal Component for Noir Detailing.
   Provides a programmatically-invoked Promise-based alert/notification modal dialog (show method).
 -->
 <template>
@@ -50,7 +50,7 @@ const sanitizeErrorMessage = (msg, infoMode) => {
   
   // Log full raw error trace to browser developer console for debugging
   if (!infoMode) {
-    console.error('[Montage Studio System Error]:', msg);
+    console.error('[Noir Detailing System Error]:', msg);
   }
   
   // Intercept and sanitize technical, Prisma, and database tracebacks

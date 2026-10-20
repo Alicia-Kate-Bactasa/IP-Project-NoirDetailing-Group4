@@ -1,5 +1,5 @@
 /**
- * Client environment configuration for Montage Auto Studio.
+ * Client environment configuration for Noir Detailing.
  * Sets the base backend API endpoint accessed by the frontend application.
  */
 

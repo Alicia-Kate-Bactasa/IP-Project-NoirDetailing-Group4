@@ -1,5 +1,5 @@
 /**
- * Centralized environment + security configuration for Montage Auto Studio.
+ * Centralized environment + security configuration for Noir Detailing.
  * Loads environment variables from server/.env or root .env, resolves the
  * JWT signing secret, and exposes shared config to the rest of the app.
  */

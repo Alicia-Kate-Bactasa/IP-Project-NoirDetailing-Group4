@@ -1,5 +1,5 @@
 /**
- * Payments & Checkout API Router for Montage Auto Studio.
+ * Payments & Checkout API Router for Noir Detailing.
  * Handles PayMongo Hosted Checkout integration (GCash, Maya, Card), payment status verification,
  * manual payment proof submissions, and admin payment approval/rejection workflows.
  */
@@ -198,7 +198,7 @@ router.post('/paymongo/checkout', async (req, res) => {
     const numericAmount = parseFloat(amount) || 250;
     const rawKey = process.env.PAYMONGO_SECRET_KEY || '';
     const paymongoKey = rawKey.trim();
-    const itemDescription = service_name || 'Montage Auto Studio Detailing Service';
+    const itemDescription = service_name || 'Noir Detailing Service';
     const amountInCents = Math.round(numericAmount * 100);
 
     const baseReturnUrl = return_url || req.headers.referer || 'http://localhost:5173/';
@@ -232,7 +232,7 @@ router.post('/paymongo/checkout', async (req, res) => {
                     currency: 'PHP',
                     amount: amountInCents,
                     description: itemDescription,
-                    name: service_name || 'Montage Auto Studio Service',
+                    name: service_name || 'Noir Detailing Service',
                     quantity: 1
                   }
                 ],

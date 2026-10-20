@@ -1,5 +1,5 @@
 /**
- * Vue Router configuration for Montage Auto Studio.
+ * Vue Router configuration for Noir Detailing.
  * Defines client-side routes, navigation guards, and history mode settings.
  */
 

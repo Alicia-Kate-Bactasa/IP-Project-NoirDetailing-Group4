@@ -1,5 +1,5 @@
 /**
- * Authentication & Security API Router for Montage Auto Studio.
+ * Authentication & Security API Router for Noir Detailing.
  * Handles user login, registration pre-checkout with PayMongo, profile retrieval (/me),
  * and 6-digit OTP verification password reset functionality.
  */

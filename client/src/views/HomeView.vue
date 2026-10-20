@@ -1,5 +1,5 @@
 <!--
-  Public Home Landing View Component for Montage Auto Studio.
+  Public Home Landing View Component for Noir Detailing.
   Renders hero section, studio facility highlights, detailing services catalog, VIP subscription plan promo,
   and guest booking reservation portal with PayMongo checkout integration.
 -->
@@ -8,7 +8,7 @@
     <!-- LANDING PAGE HEADER -->
     <header class="sticky top-0 z-40 bg-light/90 backdrop-blur-md border-b border-neutral-200/60">
       <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-        <router-link to="/" class="text-lg font-bold tracking-tight uppercase">Montage Auto Studio</router-link>
+        <router-link to="/" class="text-lg font-bold tracking-tight uppercase">Noir Detailing</router-link>
         <nav class="hidden md:flex items-center space-x-8 text-xs font-semibold tracking-wider uppercase text-neutral-500 font-medium">
           <a href="#about" class="hover:text-dark transition-colors">About</a>
           <a href="#menu" class="hover:text-dark transition-colors">Services</a>
@@ -275,7 +275,7 @@
     <footer class="bg-dark text-light pt-16 pb-8 border-t border-neutral-900">
       <div class="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-4 gap-12 text-xs font-normal mb-12">
         <div>
-          <div class="text-base font-bold uppercase tracking-tight mb-4 text-white">Montage Auto Studio</div>
+          <div class="text-base font-bold uppercase tracking-tight mb-4 text-white">Noir Detailing</div>
           <p class="text-neutral-400 text-xs leading-relaxed font-light">Premium Car Care, Scheduled Around Your Lifestyle.</p>
         </div>
         <div>
@@ -296,7 +296,7 @@
         </div>
       </div>
       <div class="max-w-7xl mx-auto px-6 pt-8 border-t border-neutral-800/60 text-xs text-neutral-500 font-medium">
-        © 2026 Montage Auto Studio. All Rights Reserved.
+        © 2026 Noir Detailing. All Rights Reserved.
       </div>
     </footer>
 

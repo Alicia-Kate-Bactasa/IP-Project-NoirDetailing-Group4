@@ -1,5 +1,5 @@
 /**
- * Request Payload Validation Middleware for Montage Auto Studio.
+ * Request Payload Validation Middleware for Noir Detailing.
  * Uses Zod schemas to validate incoming request body, query parameters, and URL parameters before route handlers process them.
  */
 

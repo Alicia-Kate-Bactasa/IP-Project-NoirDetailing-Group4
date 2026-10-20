@@ -1,5 +1,5 @@
 <!--
-  Admin Management View Component for Montage Auto Studio.
+  Admin Management View Component for Noir Detailing.
   Provides administrative controls for booking status workflow, walk-in appointment creation,
   payment proof verification, service catalog editing, and VIP subscriber roster management.
 -->
@@ -18,7 +18,7 @@
         <div class="flex items-center justify-between">
           <div v-if="!isSidebarCollapsed" class="overflow-hidden whitespace-nowrap">
             <h1 class="font-bold text-xs tracking-widest text-neutral-400">Admin</h1>
-            <p class="text-lg font-bold tracking-tight mt-1 text-black">Montage Auto Studio</p>
+            <p class="text-lg font-bold tracking-tight mt-1 text-black">Noir Detailing</p>
           </div>
           <button 
             @click="toggleSidebar" 

@@ -1,5 +1,5 @@
 /**
- * Authentication & Authorization Middleware module for Montage Auto Studio.
+ * Authentication & Authorization Middleware module for Noir Detailing.
  * Verifies JSON Web Tokens (JWT) for protected client routes and enforces role-based access control (Admin).
  */
 

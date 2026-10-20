@@ -1,5 +1,5 @@
 <!--
-  Feedback Modal Component for Montage Auto Studio.
+  Feedback Modal Component for Noir Detailing.
   Allows customers to input a booking reference ID, automatically verifies session completion via API,
   renders booking details, and collects 1-5 star ratings and comments.
 -->

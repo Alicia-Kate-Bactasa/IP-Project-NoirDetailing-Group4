@@ -1,5 +1,5 @@
 <!--
-  VIP Membership Roster Modal Component for Montage Auto Studio.
+  VIP Membership Roster Modal Component for Noir Detailing.
   Collects new member registration details and redirects to PayMongo Hosted Checkout for ₱1,500 monthly VIP membership.
 -->
 <template>

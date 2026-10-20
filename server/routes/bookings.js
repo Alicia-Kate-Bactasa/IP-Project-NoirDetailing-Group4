@@ -1,5 +1,5 @@
 /**
- * Booking Management API Router for Montage Auto Studio.
+ * Booking Management API Router for Noir Detailing.
  * Handles appointment slot checking, regular guest bookings, ₱0.00 VIP member bookings,
  * booking rescheduling, status updates, and booking cancellations.
  */

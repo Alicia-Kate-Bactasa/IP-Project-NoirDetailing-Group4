@@ -1,5 +1,5 @@
 /**
- * Tailwind CSS configuration for Montage Auto Studio.
+ * Tailwind CSS configuration for Noir Detailing.
  * Defines template content paths, typography, theme colors, and custom styles.
  */
 
