@@ -391,8 +391,11 @@
                 <button @click="handleSubscriptionRenewal" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-4 rounded-full transition-all text-center shadow-sm uppercase tracking-wider">
                   Pay Monthly Renewal (₱1,500)
                 </button>
-                <button v-if="isSubscriberActive" @click="handleCancelSubscription" class="w-full bg-white hover:bg-red-50 text-red-600 border border-neutral-200 hover:border-red-200 text-xs font-bold tracking-widest uppercase py-4 rounded-full transition-all text-center">
+                <button v-if="isSubscriberActive && subscriptionDetails.auto_renew !== false" @click="handleCancelSubscription" class="w-full bg-white hover:bg-red-50 text-red-600 border border-neutral-200 hover:border-red-200 text-xs font-bold tracking-widest uppercase py-4 rounded-full transition-all text-center">
                   Cancel Subscription Plan
+                </button>
+                <button v-if="isSubscriberActive && subscriptionDetails.auto_renew === false" @click="handleResumeAutoRenew" class="w-full bg-dark hover:bg-neutral-800 text-white text-xs font-bold tracking-widest uppercase py-4 rounded-full transition-all text-center">
+                  Resume Auto-Renew
                 </button>
               </div>
             </div>
@@ -456,18 +459,21 @@ const loadingSlots = ref(false);
 
 const subscriptionDetails = ref({
   plan_status: 'Active',
+  auto_renew: true,
   created_at: new Date().toISOString().split('T')[0],
   last_billing_date: new Date().toISOString().split('T')[0],
   next_billing_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
 });
 
 const isSubscriberActive = computed(() => {
+  // Cancellation_Pending still has full access until the paid period ends.
+  const activeStatuses = ['ACTIVE', 'CANCELLATION_PENDING'];
   const localStatus = localStorage.getItem('subscriber_plan_status');
   if (localStatus) {
-    return localStatus.toUpperCase() === 'ACTIVE';
+    return activeStatuses.includes(localStatus.toUpperCase());
   }
   const status = String(subscriptionDetails.value.plan_status || '').toUpperCase();
-  return status === 'ACTIVE';
+  return activeStatuses.includes(status);
 });
 
 const completedSessionsCount = computed(() => {
@@ -686,13 +692,17 @@ const fetchSubscriptionDetails = async () => {
         localStorage.setItem('subscriber_plan_status', statusFromDb);
 
         let displayStatus = statusFromDb;
-        if (String(statusFromDb).toUpperCase() !== 'ACTIVE') {
+        if (String(statusFromDb).toUpperCase() === 'CANCELLATION_PENDING') {
+          // Perks remain active until next_billing_date; make that explicit.
+          displayStatus = 'Active (Cancelling)';
+        } else if (String(statusFromDb).toUpperCase() !== 'ACTIVE') {
           displayStatus = 'Account Inactive';
         }
 
         subscriptionDetails.value = {
           subscription_id: sub.subscription_id || null,
           plan_status: displayStatus,
+          auto_renew: sub.auto_renew !== false,
           created_at: sub.created_at ? String(sub.created_at).split('T')[0] : new Date().toISOString().split('T')[0],
           last_billing_date: sub.last_billing_date ? String(sub.last_billing_date).split('T')[0] : new Date().toISOString().split('T')[0],
           next_billing_date: sub.next_billing_date ? String(sub.next_billing_date).split('T')[0] : new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
@@ -842,16 +852,66 @@ const handleCancelSubscription = async () => {
       throw new Error(result.message || 'Failed to cancel subscription.');
     }
 
-    // Apply server-confirmed state only after a successful response
-    localStorage.setItem('subscriber_plan_status', 'Cancelled');
-    subscriptionDetails.value.plan_status = 'Account Inactive';
+    // Apply server-confirmed state only after a successful response.
+    // Cancellation is scheduled for the end of the paid period: the member keeps
+    // every VIP perk (and booking rights) until `next_billing_date`.
+    const cancelled = result.data || {};
+    localStorage.setItem('subscriber_plan_status', 'Cancellation_Pending');
+    if (subscriptionDetails.value) {
+      subscriptionDetails.value.plan_status = 'Active (Cancelling)';
+      subscriptionDetails.value.auto_renew = false;
+      if (cancelled.next_billing_date) {
+        subscriptionDetails.value.next_billing_date = cancelled.next_billing_date;
+      }
+    }
 
     if (errorModal.value) {
-      await errorModal.value.show("Subscription plan cancelled successfully. Unlimited booking is now disabled for inactive accounts.", true);
+      await errorModal.value.show(
+        result.message || 'Cancellation scheduled. Your VIP perks stay active until the end of the current billing period.',
+        true
+      );
     }
   } catch (err) {
     if (errorModal.value) {
       await errorModal.value.show(err.message || 'Failed to cancel subscription. Please try again.', false);
+    }
+  }
+};
+
+const handleResumeAutoRenew = async () => {
+  try {
+    const apiBase = window.API_BASE_URL || '/api/v1';
+    const token = localStorage.getItem('auth_token');
+
+    const res = await fetch(`${apiBase}/subscriptions/auto-renew`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ auto_renew: true })
+    });
+    const result = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(result.message || 'Failed to resume auto-renew.');
+    }
+
+    localStorage.setItem('subscriber_plan_status', 'Active');
+    subscriptionDetails.value.plan_status = 'Active';
+    subscriptionDetails.value.auto_renew = true;
+
+    await fetchSubscriptionDetails();
+
+    if (errorModal.value) {
+      await errorModal.value.show(
+        result.message || 'Auto-renew is on. Your VIP perks continue without interruption.',
+        true
+      );
+    }
+  } catch (err) {
+    if (errorModal.value) {
+      await errorModal.value.show(err.message || 'Failed to resume auto-renew. Please try again.', false);
     }
   }
 };

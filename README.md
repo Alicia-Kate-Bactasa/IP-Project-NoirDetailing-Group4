@@ -64,6 +64,93 @@ noirDetailing/
 
 ---
 
+## API Documentation
+
+The REST API is described by an OpenAPI 3.0 contract at [`server/openapi.yaml`](server/openapi.yaml) — 49 operations across the Auth, Services, Bookings, Payments, Subscriptions, Admin (incl. billing), Feedback and Health groups.
+
+Once the backend is running:
+
+| Resource | URL |
+|---|---|
+| Interactive Swagger UI | http://localhost:5001/api-docs |
+| Raw OpenAPI JSON (codegen / Postman) | http://localhost:5001/api-docs/openapi.json |
+
+To call protected endpoints from Swagger UI, log in via `POST /auth/login`, copy the returned `token`, click **Authorize**, and paste it as the Bearer value. Documentation can be disabled with `ENABLE_API_DOCS=false` in `server/.env`.
+
+---
+
+## Recurring VIP Billing (Option C)
+
+VIP memberships renew automatically through a daily **node-cron** job (default
+`0 8 * * *`, `Asia/Manila`). Two paths are supported:
+
+| Member has… | What happens on the renewal date |
+|---|---|
+| A saved card (`pm_...` from PayMongo.js) | The card is charged silently. If it fails or needs 3-D Secure, the member is emailed and falls back to invoicing. |
+| GCash / Maya / no saved card | An invoice is created (or reused) and emailed. GCash and Maya **cannot be charged unattended**, so these members must pay the invoice themselves. |
+
+### Safety model
+
+- **`AUTO_BILLING_DRY_RUN=true` by default.** The job logs what it *would* do and
+  writes/charges nothing. Set it to `false` only after reviewing a dry run.
+- **Idempotent by design.** Each cycle has one `BillingPeriod` row, enforced by a
+  unique `(subscription_id, period_start)` constraint plus an optimistic claim on
+  `last_attempt_at`; card charges also send a stable PayMongo `Idempotency-Key`.
+  Running the job twice cannot double-charge a member.
+- **Server-side pricing.** The amount comes from `SUBSCRIPTION_MONTHLY_FEE`
+  (default ₱1,500), never from the client.
+
+### Status / dunning flow
+
+```
+Active ──payment ok──────────────► Active (next_billing_date +1 month)
+   │
+   ├──charge/invoice fails──► Payment_Pending (grace_period_start set)
+   │                              │ payment ok ─► Active
+   │                              └ grace + retries exhausted ─► Expired
+   │
+   ├──cancel requested──────► Cancellation_Pending
+   │                              └ period ends ─► Expired (no charge)
+   │
+   └──auto-renew off────────► Expired at next_billing_date
+```
+
+- Grace window: `AUTO_BILLING_GRACE_DAYS` (default 5). Card retries follow
+  `AUTO_BILLING_RETRY_DAYS` (default `0,3,7`) but stop at the grace boundary; the
+  last offset also bounds the auto-invoice dunning window.
+- A renewal reminder email goes out `AUTO_BILLING_REMINDER_DAYS` (default 3) before
+  the renewal date.
+- Cancelling keeps every VIP perk until `next_billing_date`; members can reactivate
+  for free while the paid period is still running.
+
+### Configuration (`server/.env`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUTO_BILLING_ENABLED` | `true` | Start the cron scheduler with the server. |
+| `AUTO_BILLING_DRY_RUN` | `true` | Log-only mode — no charges or writes. |
+| `AUTO_BILLING_CRON` | `0 8 * * *` | Sweep schedule (studio timezone). |
+| `BUSINESS_TIMEZONE` | `Asia/Manila` | Timezone for billing dates and cron. |
+| `SUBSCRIPTION_MONTHLY_FEE` | `1500` | Monthly fee in PHP. |
+| `AUTO_BILLING_GRACE_DAYS` | `5` | Access kept after a failed renewal. |
+| `AUTO_BILLING_RETRY_DAYS` | `0,3,7` | Retry offsets for failed charges / dunning window. |
+| `AUTO_BILLING_REMINDER_DAYS` | `3` | Days before renewal to email a reminder (`0` = off). |
+| `PUBLIC_APP_URL` | `http://localhost:5173` | Base for billing email links. |
+
+### Manual control
+
+- `POST /api/v1/admin/billing/run` — run the sweep on demand. Accepts
+  `{ "dry_run": true, "subscription_id": 12 }`.
+- `GET /api/v1/admin/billing/periods?status=Failed&take=50` — inspect the ledger.
+- Member endpoints: `PUT /subscriptions/auto-renew`,
+  `PUT|DELETE /subscriptions/payment-method`, `GET /subscriptions/billing-history`.
+
+> **Not implemented:** the PayMongo webhook receiver + signature verification.
+> Payment confirmation currently relies on the checkout redirect
+> (`POST /payments/verify`), which should be hardened before going live.
+
+---
+
 ## Getting Started
 
 ### 1. Backend Setup
@@ -79,6 +166,9 @@ cp .env.example .env
 
 # Generate Prisma Client
 npx prisma generate
+
+# Create / update the PostgreSQL schema (project has no migration history)
+npx prisma db push
 
 # Start Express REST API server
 npm run dev

@@ -1,0 +1,2823 @@
+openapi: 3.0.3
+
+info:
+  title: Noir Detailing API
+  version: 1.0.0
+  description: |
+    Custom RESTful API for the **Noir Detailing** auto-detailing booking and VIP
+    membership platform (Express + Prisma).
+
+    ### Base path
+    All endpoints are served under `/api/v1`. In local development the API runs on
+    `http://localhost:5001`; in production it is proxied behind Apache at
+    `https://noir-detailing.dcism.org`.
+
+    ### Response envelope
+    Most endpoints return:
+
+    ```json
+    { "status": "success", "message": "...", "data": { } }
+    ```
+
+    A few collection endpoints intentionally return a bare JSON array
+    (`GET /bookings/user/bookings`, `GET /admin/bookings`, `GET /admin/invoices`,
+    `GET /admin/subscriptions`) and errors use:
+
+    ```json
+    { "status": "error", "message": "..." }
+    ```
+
+    ### Authentication
+    Protected routes expect a Bearer JWT issued by `POST /auth/login` (or by
+    `POST /payments/verify` after a paid VIP registration). Tokens expire in 7 days
+    and carry `userId`, `email` and `role`.
+
+    ### Money & dates
+    Prisma `Decimal` values are serialized as **strings** (e.g. `"1500.00"`) to
+    preserve precision. `DateTime` values are ISO-8601 strings; calendar-only
+    values (`scheduled_date`) always carry a `00:00:00Z` time component.
+
+    ### Known limitation
+    `POST /payments/verify` is currently unauthenticated and trusts the redirect
+    query string rather than a signed PayMongo webhook. Do not treat it as a
+    trusted payment confirmation in production.
+
+  license:
+    name: Educational / Capstone Project
+
+servers:
+  - url: http://localhost:5001/api/v1
+    description: Local development
+  - url: https://noir-detailing.dcism.org/api/v1
+    description: Production (Apache reverse proxy)
+
+tags:
+  - name: Health
+    description: Service liveness probe.
+  - name: Auth
+    description: Registration, login, profile and password recovery.
+  - name: Services
+    description: Detailing package catalog (CRUD + activation toggles).
+  - name: Bookings
+    description: Appointment scheduling, availability, reschedule and cancellation.
+  - name: Payments
+    description: PayMongo checkout, manual proof of payment, and admin approvals.
+  - name: Subscriptions
+    description: VIP membership roster lifecycle.
+  - name: Admin
+    description: Administrative dashboards and walk-in counter bookings.
+  - name: Feedback
+    description: Post-service customer ratings.
+
+paths:
+  # ---------------------------------------------------------------------------
+  # Health
+  # ---------------------------------------------------------------------------
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: Returns service status and the current server timestamp.
+      security: []
+      responses:
+        '200':
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: Noir Detailing API
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  # ---------------------------------------------------------------------------
+  # Auth
+  # ---------------------------------------------------------------------------
+  /auth/pre-register:
+    post:
+      tags: [Auth]
+      summary: Start VIP membership pre-registration (PayMongo checkout)
+      description: |
+        Validates the signup payload, stores it in a temporary `PendingRegistration`
+        record (2-hour expiry) with a bcrypt password hash, then creates a PayMongo
+        Checkout Session for the ₱1,500 monthly VIP roster.
+
+        No `User`, `Customer`, `Subscription` or `Invoice` rows are created until
+        `POST /payments/verify` redeems the returned `reg_token`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationRequest'
+      responses:
+        '200':
+          description: Checkout session created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  checkout_url:
+                    type: string
+                    format: uri
+                    description: PayMongo hosted checkout URL to redirect the customer to.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Alias of /auth/pre-register
+      description: Same handler as `POST /auth/pre-register`; kept for client compatibility.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationRequest'
+      responses:
+        '200':
+          description: Checkout session created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  checkout_url:
+                    type: string
+                    format: uri
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and receive a JWT
+      description: |
+        Verifies the password against the stored bcrypt hash (legacy PHP `$2y$`
+        hashes are normalised to `$2a$`) and returns a 7-day JWT.
+
+        Rate limited to 20 requests per 15 minutes per IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: member@example.com
+                password:
+                  type: string
+                  format: password
+                  example: hunter2
+      responses:
+        '200':
+          description: Authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Missing credentials or invalid email/password.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the authenticated user's profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Profile retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      user_id:
+                        type: integer
+                        example: 12
+                      email:
+                        type: string
+                        format: email
+                      username:
+                        type: string
+                      role:
+                        $ref: '#/components/schemas/UserRole'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request a 6-digit password reset OTP
+      description: |
+        Generates a cryptographically random 6-digit code valid for 1 hour, stores it
+        in `user_security_actions`, and emails it via SMTP.
+
+        Always returns `200` for unknown addresses to prevent email enumeration.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Reset code dispatched (or silently ignored for unknown emails).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Validate a password reset OTP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, otp]
+              properties:
+                email:
+                  type: string
+                  format: email
+                otp:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                  example: '481920'
+      responses:
+        '200':
+          description: Code is valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          description: Invalid or expired code.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset the password using a valid OTP
+      description: Requires a non-expired OTP; on success all reset actions for the email are invalidated.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, otp, newPassword]
+              properties:
+                email:
+                  type: string
+                  format: email
+                otp:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                newPassword:
+                  type: string
+                  format: password
+                  minLength: 6
+      responses:
+        '200':
+          description: Password updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ---------------------------------------------------------------------------
+  # Services
+  # ---------------------------------------------------------------------------
+  /services:
+    get:
+      tags: [Services]
+      summary: List detailing packages
+      security: []
+      parameters:
+        - name: include_inactive
+          in: query
+          required: false
+          description: Pass `true` to include soft-deleted (inactive) packages.
+          schema:
+            type: string
+            enum: ['true', 'false']
+      responses:
+        '200':
+          description: Catalog retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Service'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Services]
+      summary: Create a detailing package (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceInput'
+      responses:
+        '201':
+          description: Package created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Service'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /services/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ServiceId'
+    get:
+      tags: [Services]
+      summary: Get one detailing package
+      security: []
+      responses:
+        '200':
+          description: Package retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    $ref: '#/components/schemas/Service'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Services]
+      summary: Update a detailing package (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceInput'
+      responses:
+        '200':
+          description: Package updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Service'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [Services]
+      summary: Soft-delete a detailing package (admin)
+      description: Sets `is_active` to `false`; the row is never physically removed.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Package deactivated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Service'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /services/{id}/toggle:
+    parameters:
+      - $ref: '#/components/parameters/ServiceId'
+    patch:
+      tags: [Services]
+      summary: Toggle a package's active state (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Activation state flipped.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Service package deactivated successfully.
+                  data:
+                    $ref: '#/components/schemas/Service'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ---------------------------------------------------------------------------
+  # Bookings
+  # ---------------------------------------------------------------------------
+  /bookings:
+    get:
+      tags: [Bookings]
+      summary: List bookings
+      description: |
+        Admins receive every booking. Non-admin callers receive only their own
+        bookings, resolved by the authenticated email. Unknown accounts get an
+        empty list rather than an error.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter by booking status.
+          schema:
+            $ref: '#/components/schemas/BookingStatus'
+        - name: date
+          in: query
+          required: false
+          description: Filter by scheduled date (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Bookings retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Bookings]
+      summary: Create a booking (guest or subscriber)
+      description: |
+        Validated with Zod. Atomically creates the `Booking`, a linked `Invoice`
+        (`Single_Detailing`) and increments the customer's booking count.
+
+        - Authenticated user with an **Active** subscription → status `Pending`,
+          invoice amount `0.00`, invoice status `Paid`.
+        - Guest (or subscriber without an active plan) → status
+          `Pending_Verification`, invoice amount equals the service price, invoice
+          status `Pending`.
+
+        Subscriber benefits are only granted from a valid Bearer token; a
+        client-supplied `user_id` is never trusted.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingCreateRequest'
+      responses:
+        '201':
+          description: Booking and invoice created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingCreatedResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          description: Service missing or inactive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Bay already booked for that slot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /bookings/availability:
+    get:
+      tags: [Bookings]
+      summary: List occupied slots for a date
+      security: []
+      parameters:
+        - name: date
+          in: query
+          required: true
+          description: Calendar date to inspect (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+            example: '2026-11-05'
+      responses:
+        '200':
+          description: Occupied slots (Cancelled and No-Show bookings are excluded).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      date:
+                        type: string
+                        format: date
+                      booked_slots:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            booking_id:
+                              type: integer
+                            time_slot:
+                              type: string
+                            bay_number:
+                              type: integer
+                            service_id:
+                              type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /bookings/member:
+    post:
+      tags: [Bookings]
+      summary: Create a ₱0.00 VIP member booking
+      description: |
+        Requires an authenticated user with an **Active** subscription. Creates a
+        `Confirmed` booking with a `Paid` zero-amount invoice in one transaction.
+        Always uses bay `1`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_id, scheduled_date, time_slot]
+              properties:
+                service_id:
+                  type: integer
+                  example: 3
+                scheduled_date:
+                  type: string
+                  format: date
+                  example: '2026-11-06'
+                time_slot:
+                  type: string
+                  example: '10:00 AM'
+      responses:
+        '201':
+          description: VIP appointment reserved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: VIP Appointment reserved successfully at ₱0.00 invoice!
+                  data:
+                    type: object
+                    properties:
+                      booking:
+                        $ref: '#/components/schemas/Booking'
+                      invoice:
+                        $ref: '#/components/schemas/Invoice'
+        '400':
+          description: Missing required fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: No active VIP subscription.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Account or service not found / inactive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Slot already occupied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /bookings/user/bookings:
+    get:
+      tags: [Bookings]
+      summary: List the caller's bookings (bare array)
+      description: Returns a **bare JSON array** (no envelope). On internal failure it returns `200 []` rather than an error.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Bookings for the authenticated account, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /bookings/{id}/reschedule:
+    parameters:
+      - $ref: '#/components/parameters/BookingId'
+    put:
+      tags: [Bookings]
+      summary: Reschedule a booking
+      description: |
+        Admins may reschedule any booking; customers only their own. Checks slot
+        collisions (excluding the booking being moved) and emails the new details.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scheduled_date, time_slot]
+              properties:
+                scheduled_date:
+                  type: string
+                  format: date
+                time_slot:
+                  type: string
+                bay_number:
+                  type: integer
+      responses:
+        '200':
+          description: Booking rescheduled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Target slot already occupied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /bookings/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/BookingId'
+    put:
+      tags: [Bookings]
+      summary: Cancel a booking
+      description: |
+        Sets the booking to `Cancelled`, voids any `Pending` invoice, and emails a
+        cancellation notice. Admins may cancel any booking; customers only their own.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Booking cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /bookings/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/BookingId'
+    put:
+      tags: [Bookings]
+      summary: Update booking status (admin)
+      description: |
+        Minimal status setter. Prefer `PUT /admin/bookings/{id}/status`, which
+        validates the status against the enum and sends notification emails.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [booking_status]
+              properties:
+                booking_status:
+                  $ref: '#/components/schemas/BookingStatus'
+      responses:
+        '200':
+          description: Status updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ---------------------------------------------------------------------------
+  # Payments
+  # ---------------------------------------------------------------------------
+  /payments/invoices:
+    get:
+      tags: [Payments]
+      summary: List invoices with payments
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/InvoiceStatus'
+      responses:
+        '200':
+          description: Invoices retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Invoice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /payments:
+    post:
+      tags: [Payments]
+      summary: Submit manual proof of payment
+      description: |
+        Records a GCash / bank transfer reference against an invoice with status
+        `Pending Approval` for admin review.
+
+        The caller must own the invoice (or be an admin). The invoice total is
+        authoritative — any `amount` in the body is ignored, so a client cannot
+        underpay by editing the request.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invoice_id, proof_of_payment]
+              properties:
+                invoice_id:
+                  type: integer
+                  example: 41
+                amount:
+                  type: number
+                  deprecated: true
+                  description: Ignored. The invoice total is always used.
+                  example: 1500
+                payment_method:
+                  type: string
+                  default: GCash
+                proof_of_payment:
+                  type: string
+                  minLength: 5
+                  description: Reference number or proof image URL.
+                  example: GCASH-REF-889231
+      responses:
+        '201':
+          description: Proof recorded pending approval.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Invoice is already Paid or Void.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /payments/{id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/PaymentId'
+    put:
+      tags: [Payments]
+      summary: Approve a payment (admin)
+      description: |
+        In one transaction: payment → `Paid`, invoice → `Paid`, linked booking →
+        `Confirmed`, linked subscription → `Active` with refreshed billing dates.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Payment approved and linked records activated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      payment:
+                        $ref: '#/components/schemas/Payment'
+                      invoice:
+                        $ref: '#/components/schemas/Invoice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /payments/{id}/reject:
+    parameters:
+      - $ref: '#/components/parameters/PaymentId'
+    put:
+      tags: [Payments]
+      summary: Reject a payment (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Payment marked `Rejected`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /payments/paymongo/checkout:
+    post:
+      tags: [Payments]
+      summary: Create a PayMongo checkout session
+      description: |
+        Builds a PayMongo Checkout Session (GCash, Maya, card, etc.) and returns
+        the hosted checkout URL.
+
+        The payable amount, line-item name and return URLs are resolved from the
+        invoice stored in the database. Any `amount` / `service_name` sent by the
+        client is ignored, so prices cannot be tampered with.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '200':
+          description: Checkout session created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  provider:
+                    type: string
+                    example: paymongo
+                  sandbox:
+                    type: boolean
+                    description: True when an `sk_test_` key is configured.
+                  checkout_url:
+                    type: string
+                    format: uri
+                  checkout_session_id:
+                    type: string
+                    example: cs_9f1c2b7a
+                  invoice_id:
+                    type: integer
+                  amount:
+                    type: number
+                    description: Server-side invoice total actually charged.
+        '400':
+          description: Missing/invalid PayMongo key, no payable amount, or PayMongo rejected the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No invoice matches invoice_id / booking_id / subscription_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Invoice is already Paid or Void.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /payments/verify:
+    post:
+      tags: [Payments]
+      summary: Verify payment completion
+      description: |
+        Two modes:
+
+        1. **Registration mode** — when `reg_token` is supplied, the pending
+           registration is redeemed atomically: `User` + `Customer` + active
+           `Subscription` + `Paid` ₱1,500 invoice + `Paid` payment are created, the
+           pending row is deleted, and a JWT is returned for instant login.
+        2. **Checkout mode** — with `invoice_id`, `booking_id` and/or
+           `subscription_id`, a `Paid` payment is recorded, the invoice is marked
+           `Paid`, the booking `Confirmed`, and the subscription `Active`, then an
+           invoice receipt email is sent.
+
+        **Known limitation:** no PayMongo webhook signature is checked; the redirect
+        query string is trusted.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reg_token:
+                  type: string
+                  description: Opaque registration token from the checkout success URL.
+                invoice_id:
+                  type: integer
+                booking_id:
+                  type: integer
+                subscription_id:
+                  type: integer
+                payment_method:
+                  type: string
+                  example: PayMongo (GCash/Maya/Card)
+      responses:
+        '200':
+          description: |
+            Payment verified. Registration mode returns `token` + `user`; checkout
+            mode returns `data.success` and the created payment.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/RegistrationVerifiedResponse'
+                  - $ref: '#/components/schemas/PaymentVerifiedResponse'
+        '400':
+          description: Expired/invalid registration token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ---------------------------------------------------------------------------
+  # Subscriptions
+  # ---------------------------------------------------------------------------
+  /subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: List all VIP subscriptions (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PlanStatus'
+      responses:
+        '200':
+          description: Roster retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Subscription'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /subscriptions/me:
+    get:
+      tags: [Subscriptions]
+      summary: Get the caller's membership status
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Membership profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        type: object
+                        properties:
+                          user_id:
+                            type: integer
+                          email:
+                            type: string
+                            nullable: true
+                          username:
+                            type: string
+                      subscription:
+                        allOf:
+                          - $ref: '#/components/schemas/Subscription'
+                        nullable: true
+                      payment_method:
+                        type: object
+                        description: Saved-card summary. The PayMongo token is never exposed.
+                        properties:
+                          saved:
+                            type: boolean
+                          brand:
+                            type: string
+                            nullable: true
+                          last4:
+                            type: string
+                            nullable: true
+                      auto_renew:
+                        type: boolean
+                        nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /subscriptions/renew:
+    post:
+      tags: [Subscriptions]
+      summary: Start a membership renewal
+      description: |
+        Creates or reuses a ₱1,500 `Monthly Roster` invoice. It never suspends an
+        active plan: the member keeps VIP perks while the invoice is open, and the
+        plan becomes `Active` only once the payment is verified.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                plan_tier:
+                  type: string
+                  default: Unlimited Basic Wash
+      responses:
+        '200':
+          description: Renewal invoice generated (reuses any open renewal invoice).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      subscription:
+                        $ref: '#/components/schemas/Subscription'
+                      invoice:
+                        $ref: '#/components/schemas/Invoice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /subscriptions/cancel:
+    post:
+      tags: [Subscriptions]
+      summary: Cancel a membership at period end
+      description: |
+        Schedules cancellation instead of revoking access immediately: the plan
+        becomes `Cancellation Pending`, `auto_renew` is disabled, and the member
+        keeps every perk until `next_billing_date`. Admins may target another
+        member via `email`. Reactivating later reverses it while the period is
+        still paid.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: Admin only — cancel another member's plan.
+      responses:
+        '200':
+          description: Cancellation scheduled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    description: Includes the date VIP perks remain active until.
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Subscription'
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /subscriptions/reactivate:
+    post:
+      tags: [Subscriptions]
+      summary: Reactivate a membership
+      description: |
+        Members can reverse a pending cancellation for free while their paid
+        period is still running. Expired / `Payment Pending` plans need a payment
+        instead and receive a renewal invoice (`checkout_required: true`). Admins
+        may activate any member immediately by passing `email`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: Admin only — reactivate another member's plan.
+      responses:
+        '200':
+          description: |
+            Either activated immediately (`checkout_required: false`) or a renewal
+            invoice is returned (`checkout_required: true`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  checkout_required:
+                    type: boolean
+                  data:
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /subscriptions/auto-renew:
+    put:
+      tags: [Subscriptions]
+      summary: Turn auto-renewal on or off
+      description: |
+        Disabling auto-renew keeps access until the period ends and then expires
+        the plan. Re-enabling it also reverses a pending cancellation.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [auto_renew]
+              properties:
+                auto_renew:
+                  type: boolean
+      responses:
+        '200':
+          description: Preference saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /subscriptions/payment-method:
+    put:
+      tags: [Subscriptions]
+      summary: Save a card for automatic renewal
+      description: |
+        Stores a PayMongo PaymentMethod id (`pm_...`) created client-side with
+        PayMongo.js. Cards are charged automatically on the renewal date; GCash
+        and Maya cannot be charged unattended and stay on auto-invoicing.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payment_method_id]
+              properties:
+                payment_method_id:
+                  type: string
+                  pattern: '^pm_[A-Za-z0-9]+$'
+                  example: pm_abc123
+                brand:
+                  type: string
+                  example: visa
+                last4:
+                  type: string
+                  example: '4242'
+      responses:
+        '200':
+          description: Card saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      saved:
+                        type: boolean
+                      brand:
+                        type: string
+                        nullable: true
+                      last4:
+                        type: string
+                        nullable: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [Subscriptions]
+      summary: Remove the saved card
+      description: The member falls back to auto-invoicing on the next cycle.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Card removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      saved:
+                        type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /subscriptions/billing-history:
+    get:
+      tags: [Subscriptions]
+      summary: List the caller's billing cycles
+      description: Returns up to 24 recent `BillingPeriod` rows with their invoice and payments.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Billing cycles (newest first).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BillingPeriod'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /subscriptions/{id}/status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    put:
+      tags: [Subscriptions]
+      summary: Set a membership status (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_status]
+              properties:
+                plan_status:
+                  $ref: '#/components/schemas/PlanStatus'
+      responses:
+        '200':
+          description: Status updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ---------------------------------------------------------------------------
+  # Admin
+  # ---------------------------------------------------------------------------
+  /admin/bookings:
+    get:
+      tags: [Admin]
+      summary: List every booking (bare array)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: All bookings with service, customer and user.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/invoices:
+    get:
+      tags: [Admin]
+      summary: List every invoice (bare array)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Payment ledger.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Invoice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/subscriptions:
+    get:
+      tags: [Admin]
+      summary: List every subscription (bare array)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: VIP roster.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Subscription'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/bookings/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/BookingId'
+    put:
+      tags: [Admin]
+      summary: Update booking status with notifications (admin)
+      description: Validates the status against the enum and sends "completed" or "cancelled" HTML emails.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [booking_status]
+              properties:
+                booking_status:
+                  $ref: '#/components/schemas/BookingStatus'
+                reason:
+                  type: string
+                  description: Included in the cancellation email.
+      responses:
+        '200':
+          description: Status updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/walkin:
+    post:
+      tags: [Admin]
+      summary: Log a paid walk-in booking (admin)
+      description: |
+        Atomically creates the walk-in `Customer`, a `Booking`, a `Paid` invoice and a
+        `Paid` cash/counter payment. Emails a receipt when an address is supplied.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, service_id]
+              properties:
+                full_name:
+                  type: string
+                  example: Juan Dela Cruz
+                phone_number:
+                  type: string
+                  default: Walk-In Counter
+                email:
+                  type: string
+                  format: email
+                service_id:
+                  type: integer
+                  example: 1
+                scheduled_date:
+                  type: string
+                  format: date
+                  description: Defaults to today.
+                time_slot:
+                  type: string
+                  default: Walk-In Immediate
+                price:
+                  type: number
+                  description: Defaults to the service price, then 250.
+      responses:
+        '201':
+          description: Walk-in logged.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      customer:
+                        $ref: '#/components/schemas/Customer'
+                      booking:
+                        $ref: '#/components/schemas/Booking'
+                      invoice:
+                        $ref: '#/components/schemas/Invoice'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/dashboard-stats:
+    get:
+      tags: [Admin]
+      summary: Dashboard counters (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Aggregated statistics.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    $ref: '#/components/schemas/DashboardStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/billing/run:
+    post:
+      tags: [Admin]
+      summary: Run the recurring-billing sweep now (admin)
+      description: |
+        Executes the same code path as the daily node-cron job — reminder pass,
+        saved-card charges and auto-invoicing/dunning.
+
+        `dry_run` defaults to the `AUTO_BILLING_DRY_RUN` environment flag, so a
+        production deployment stays log-only unless explicitly overridden.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+                  description: When true nothing is charged or written.
+                subscription_id:
+                  type: integer
+                  description: Restrict the sweep to a single subscription.
+      responses:
+        '200':
+          description: Sweep finished. `data` is the run summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      dryRun:
+                        type: boolean
+                      timezone:
+                        type: string
+                        example: Asia/Manila
+                      scanned:
+                        type: integer
+                      charged:
+                        type: array
+                        items:
+                          type: object
+                      invoiced:
+                        type: array
+                        items:
+                          type: object
+                      dunning:
+                        type: array
+                        items:
+                          type: object
+                      failed:
+                        type: array
+                        items:
+                          type: object
+                      expired:
+                        type: array
+                        items:
+                          type: object
+                      reminded:
+                        type: array
+                        items:
+                          type: object
+                      skipped:
+                        type: array
+                        items:
+                          type: object
+                      errors:
+                        type: array
+                        items:
+                          type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/billing/periods:
+    get:
+      tags: [Admin]
+      summary: Inspect the recurring-billing ledger (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/BillingPeriodStatus'
+        - name: take
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Billing periods plus the current scheduler configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      periods:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/BillingPeriod'
+                      dry_run:
+                        type: boolean
+                      cron:
+                        type: string
+                        example: 0 8 * * *
+                      timezone:
+                        type: string
+                        example: Asia/Manila
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ---------------------------------------------------------------------------
+  # Feedback
+  # ---------------------------------------------------------------------------
+  /feedback:
+    get:
+      tags: [Feedback]
+      summary: List all feedback
+      security: []
+      responses:
+        '200':
+          description: Feedback entries, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Feedback'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Feedback]
+      summary: Submit feedback for a completed booking
+      description: Only allowed once, and only when the booking status is `Completed`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [booking_id, rating]
+              properties:
+                booking_id:
+                  type: integer
+                rating:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                comments:
+                  type: string
+      responses:
+        '201':
+          description: Feedback recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Feedback'
+        '400':
+          description: Validation failure, or booking not yet completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Feedback already submitted for this booking.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /feedback/verify-booking/{bookingId}:
+    get:
+      tags: [Feedback]
+      summary: Check whether a booking can be reviewed
+      description: Non-numeric characters are stripped from the path value, so `MTG-42` resolves to booking `42`.
+      security: []
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 'MTG-42'
+      responses:
+        '200':
+          description: Booking is eligible for review.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      booking_id:
+                        type: integer
+                      customer_name:
+                        type: string
+                      service_name:
+                        type: string
+                      service_price:
+                        $ref: '#/components/schemas/Money'
+                      scheduled_date:
+                        type: string
+                        format: date-time
+                      time_slot:
+                        type: string
+        '400':
+          description: Invalid id, or the service is not completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Feedback already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT from `POST /auth/login` (or `POST /payments/verify` in registration
+        mode). Send as `Authorization: Bearer <token>`. Expires after 7 days.
+
+  parameters:
+    ServiceId:
+      name: id
+      in: path
+      required: true
+      description: Service primary key (`service_id`).
+      schema:
+        type: integer
+        minimum: 1
+    BookingId:
+      name: id
+      in: path
+      required: true
+      description: Booking primary key (`booking_id`).
+      schema:
+        type: integer
+        minimum: 1
+    PaymentId:
+      name: id
+      in: path
+      required: true
+      description: Payment primary key (`payment_id`).
+      schema:
+        type: integer
+        minimum: 1
+
+  responses:
+    BadRequest:
+      description: Missing or invalid input.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Zod validation failure listing the offending fields.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+    Unauthorized:
+      description: Missing, malformed or expired Bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Authenticated but lacking the required role (Admin).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: The referenced resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServerError:
+      description: Unhandled server-side failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          example: error
+        message:
+          type: string
+          example: Invalid email address or password.
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: error
+        message:
+          type: string
+          example: Validation failure
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                example: body.service_id
+              message:
+                type: string
+                example: Valid service_id is required
+
+    MessageResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+
+    Money:
+      type: string
+      description: Decimal amount serialized as a string to preserve precision.
+      example: '1500.00'
+
+    UserRole:
+      type: string
+      enum: [Admin, Subscriber, Customer]
+
+    BookingStatus:
+      type: string
+      enum:
+        - Pending
+        - Pending_Verification
+        - Confirmed
+        - Completed
+        - Cancelled
+        - No_Show
+        - Paid
+        - Scheduled
+
+    CustomerType:
+      type: string
+      enum: [Regular, Walk_In]
+
+    InvoiceType:
+      type: string
+      enum: [Single_Detailing, Monthly_Roster]
+
+    InvoiceStatus:
+      type: string
+      enum: [Paid, Pending, Void]
+
+    PaymentStatus:
+      type: string
+      enum: [Paid, Pending_Approval, Rejected]
+
+    PlanStatus:
+      type: string
+      enum: [Active, Payment_Pending, Expired, Cancellation_Pending]
+
+    BillingPeriodStatus:
+      type: string
+      enum: [Scheduled, Invoiced, Processing, Paid, Failed, Skipped]
+
+    Service:
+      type: object
+      description: A detailing package.
+      properties:
+        service_id:
+          type: integer
+          example: 1
+        service_name:
+          type: string
+          maxLength: 100
+          example: Full Interior Detail
+        service_price:
+          $ref: '#/components/schemas/Money'
+        service_category:
+          type: string
+          maxLength: 50
+          example: Interior
+        service_duration:
+          type: integer
+          description: Duration in minutes.
+          example: 120
+        service_description:
+          type: string
+          nullable: true
+        last_updated_by:
+          type: string
+          nullable: true
+          example: Admin
+        is_active:
+          type: boolean
+          default: true
+
+    ServiceInput:
+      type: object
+      required: [service_name, service_price]
+      properties:
+        service_name:
+          type: string
+          maxLength: 100
+        service_price:
+          type: number
+          example: 1500
+        service_category:
+          type: string
+          default: Detailing
+        service_duration:
+          type: integer
+          default: 60
+        service_description:
+          type: string
+        is_active:
+          type: boolean
+          default: true
+
+    User:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+
+    Customer:
+      type: object
+      properties:
+        customer_id:
+          type: integer
+        full_name:
+          type: string
+        phone_number:
+          type: string
+        email:
+          type: string
+          nullable: true
+        customer_type:
+          $ref: '#/components/schemas/CustomerType'
+        booking_count:
+          type: integer
+
+    Subscription:
+      type: object
+      properties:
+        subscription_id:
+          type: integer
+        user_id:
+          type: integer
+          nullable: true
+        plan_tier:
+          type: string
+          example: VIP Membership Roster
+        plan_status:
+          $ref: '#/components/schemas/PlanStatus'
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_billing_date:
+          type: string
+          format: date-time
+          nullable: true
+        next_billing_date:
+          type: string
+          format: date-time
+          nullable: true
+        completed_sessions_count:
+          type: integer
+          nullable: true
+        grace_period_start:
+          type: string
+          format: date-time
+          nullable: true
+        auto_renew:
+          type: boolean
+          description: When false the plan expires at the end of the paid period.
+        retry_count:
+          type: integer
+        last_billing_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        reminder_sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        canceled_at:
+          type: string
+          format: date-time
+          nullable: true
+        payment_method_brand:
+          type: string
+          nullable: true
+        payment_method_last4:
+          type: string
+          nullable: true
+        user:
+          allOf:
+            - $ref: '#/components/schemas/User'
+          nullable: true
+        invoices:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invoice'
+        billing_periods:
+          type: array
+          items:
+            $ref: '#/components/schemas/BillingPeriod'
+
+    BillingPeriod:
+      type: object
+      description: |
+        One recurring-billing cycle. The unique `(subscription_id, period_start)`
+        pair is the idempotency guard that prevents double charging.
+      properties:
+        period_id:
+          type: integer
+        subscription_id:
+          type: integer
+        period_start:
+          type: string
+          format: date
+        period_end:
+          type: string
+          format: date
+        status:
+          $ref: '#/components/schemas/BillingPeriodStatus'
+        amount:
+          $ref: '#/components/schemas/Money'
+        invoice_id:
+          type: integer
+          nullable: true
+        attempt_count:
+          type: integer
+        last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error:
+          type: string
+          nullable: true
+        invoice:
+          allOf:
+            - $ref: '#/components/schemas/Invoice'
+          nullable: true
+
+    Booking:
+      type: object
+      description: An appointment. Relations are present only when the endpoint includes them.
+      properties:
+        booking_id:
+          type: integer
+        customer_id:
+          type: integer
+          nullable: true
+        user_id:
+          type: integer
+          nullable: true
+        service_id:
+          type: integer
+        scheduled_date:
+          type: string
+          format: date-time
+          description: Calendar date; the time component is always 00:00:00Z.
+        time_slot:
+          type: string
+          example: '10:00 AM'
+        bay_number:
+          type: integer
+          default: 1
+        purchased_price:
+          $ref: '#/components/schemas/Money'
+        booking_status:
+          $ref: '#/components/schemas/BookingStatus'
+        status_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        service:
+          allOf:
+            - $ref: '#/components/schemas/Service'
+          nullable: true
+        customer:
+          allOf:
+            - $ref: '#/components/schemas/Customer'
+          nullable: true
+        user:
+          allOf:
+            - $ref: '#/components/schemas/User'
+          nullable: true
+        invoices:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invoice'
+        feedback:
+          allOf:
+            - $ref: '#/components/schemas/Feedback'
+          nullable: true
+
+    Invoice:
+      type: object
+      properties:
+        invoice_id:
+          type: integer
+        booking_id:
+          type: integer
+          nullable: true
+        subscription_id:
+          type: integer
+          nullable: true
+        total_amount:
+          $ref: '#/components/schemas/Money'
+        issued_at:
+          type: string
+          format: date-time
+          nullable: true
+        invoice_type:
+          $ref: '#/components/schemas/InvoiceType'
+        invoice_status:
+          $ref: '#/components/schemas/InvoiceStatus'
+        booking:
+          allOf:
+            - $ref: '#/components/schemas/Booking'
+          nullable: true
+        subscription:
+          allOf:
+            - $ref: '#/components/schemas/Subscription'
+          nullable: true
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payment'
+
+    Payment:
+      type: object
+      properties:
+        payment_id:
+          type: integer
+        invoice_id:
+          type: integer
+        amount:
+          $ref: '#/components/schemas/Money'
+        payment_date:
+          type: string
+          format: date-time
+          nullable: true
+        payment_method:
+          type: string
+          nullable: true
+          example: GCash
+        payment_status:
+          $ref: '#/components/schemas/PaymentStatus'
+        proof_of_payment:
+          type: string
+          example: GCASH-REF-889231
+
+    Feedback:
+      type: object
+      properties:
+        feedback_id:
+          type: integer
+        booking_id:
+          type: integer
+          nullable: true
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          nullable: true
+        comments:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        booking:
+          allOf:
+            - $ref: '#/components/schemas/Booking'
+          nullable: true
+
+    DashboardStats:
+      type: object
+      properties:
+        total_bookings:
+          type: integer
+        pending_bookings:
+          type: integer
+        active_subscribers:
+          type: integer
+        pending_payments:
+          type: integer
+        total_revenue:
+          $ref: '#/components/schemas/Money'
+
+    RegistrationRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 6
+        full_name:
+          type: string
+          description: Used as the username; falls back to the email local part.
+        phone_number:
+          type: string
+
+    LoginResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+        token:
+          type: string
+          description: 7-day JWT.
+        user:
+          type: object
+          properties:
+            user_id:
+              type: integer
+            email:
+              type: string
+              format: email
+            full_name:
+              type: string
+            role:
+              $ref: '#/components/schemas/UserRole'
+
+    BookingCreateRequest:
+      type: object
+      required: [service_id, scheduled_date, time_slot]
+      properties:
+        service_id:
+          type: integer
+          example: 2
+        scheduled_date:
+          type: string
+          format: date
+          example: '2026-11-05'
+        time_slot:
+          type: string
+          example: '2:00 PM'
+        bay_number:
+          type: integer
+          default: 1
+        full_name:
+          type: string
+          description: Required for guest bookings when no customer record exists.
+        phone_number:
+          type: string
+        email:
+          type: string
+          format: email
+
+    BookingCreatedResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            message:
+              type: string
+            booking_id:
+              type: integer
+            invoice_id:
+              type: integer
+            booking_status:
+              $ref: '#/components/schemas/BookingStatus'
+            total_amount:
+              $ref: '#/components/schemas/Money'
+
+    CheckoutRequest:
+      type: object
+      description: |
+        At least one of `invoice_id`, `booking_id` or `subscription_id` must resolve
+        to an invoice. `amount` / `service_name` are accepted for backward
+        compatibility but ignored — the invoice total and service name win.
+      properties:
+        invoice_id:
+          type: integer
+        booking_id:
+          type: integer
+        subscription_id:
+          type: integer
+        amount:
+          type: number
+          deprecated: true
+          description: Ignored. The invoice total is used instead.
+          example: 1500
+        service_name:
+          type: string
+          deprecated: true
+          description: Ignored. Derived from the linked service / plan tier.
+        client_email:
+          type: string
+          format: email
+          deprecated: true
+        return_url:
+          type: string
+          format: uri
+          description: Where PayMongo redirects after checkout. Falls back to the Referer header, then PUBLIC_APP_URL.
+
+    RegistrationVerifiedResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          example: Payment verified! Member account created and VIP Membership activated.
+        token:
+          type: string
+        user:
+          type: object
+          properties:
+            user_id:
+              type: integer
+            email:
+              type: string
+              format: email
+            full_name:
+              type: string
+            role:
+              $ref: '#/components/schemas/UserRole'
+
+    PaymentVerifiedResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          example: Payment verified and status updated to Paid & Confirmed.
+        data:
+          type: object
+          properties:
+            success:
+              type: boolean
+            payment:
+              allOf:
+                - $ref: '#/components/schemas/Payment'
+              nullable: true

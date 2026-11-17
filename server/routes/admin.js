@@ -8,6 +8,12 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../config/db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const config = require('../config');
+const {
+  BOOKING_STATUSES,
+  isBlockingStatus,
+  buildSlotLock
+} = require('../services/scheduling');
 
 // Protect ALL admin routes with authentication + admin role check
 router.use(requireAuth, requireAdmin);
@@ -86,17 +92,33 @@ router.put('/bookings/:id/status', async (req, res) => {
     const bookingId = parseInt(req.params.id, 10);
     const { booking_status, reason } = req.body;
 
-    const VALID_STATUSES = ['Pending', 'Pending_Verification', 'Confirmed', 'Completed', 'Cancelled', 'No_Show', 'Paid', 'Scheduled'];
-    if (!booking_status || !VALID_STATUSES.includes(booking_status)) {
+    if (!booking_status || !BOOKING_STATUSES.includes(booking_status)) {
       return res.status(400).json({
         status: 'error',
-        message: `booking_status must be one of: ${VALID_STATUSES.join(', ')}`
+        message: `booking_status must be one of: ${BOOKING_STATUSES.join(', ')}`
       });
     }
 
+    const booking = await prisma.booking.findUnique({ where: { booking_id: bookingId } });
+    if (!booking) {
+      return res.status(404).json({ status: 'error', message: 'Booking not found.' });
+    }
+
+    // Keep the DB slot reservation in sync: Cancelled / No_Show release the bay,
+    // every other status re-acquires it (409 if another booking took it meanwhile).
     const updated = await prisma.booking.update({
       where: { booking_id: bookingId },
-      data: { booking_status },
+      data: {
+        booking_status,
+        status_updated_at: new Date(),
+        slot_lock: isBlockingStatus(booking_status)
+          ? buildSlotLock({
+              scheduled_date: booking.scheduled_date,
+              time_slot: booking.time_slot,
+              bay_number: booking.bay_number
+            })
+          : null
+      },
       include: {
         service: true,
         customer: true,
@@ -133,6 +155,12 @@ router.put('/bookings/:id/status', async (req, res) => {
 
     return res.status(200).json({ status: 'success', data: updated });
   } catch (error) {
+    if (error?.code === 'P2002') {
+      return res.status(409).json({
+        status: 'error',
+        message: 'Cannot set this status: the bay and time slot are now occupied by another booking.'
+      });
+    }
     console.error('Error updating booking status:', error);
     return res.status(500).json({ status: 'error', message: 'Failed to update booking status.' });
   }
@@ -173,6 +201,9 @@ router.post('/walkin', async (req, res) => {
           scheduled_date: scheduled_date ? new Date(scheduled_date) : new Date(),
           time_slot: time_slot || 'Walk-In Immediate',
           bay_number: 1,
+          // Walk-ins are immediate counter transactions, not reserved slots, so
+          // they deliberately do not take the unique slot_lock.
+          slot_lock: null,
           purchased_price: finalPrice,
           booking_status: 'Pending'
         }
@@ -265,6 +296,94 @@ router.get('/dashboard-stats', async (req, res) => {
   } catch (error) {
     console.error('Error fetching admin dashboard stats:', error);
     return res.status(500).json({ status: 'error', message: 'Failed to retrieve admin stats.' });
+  }
+});
+
+/**
+ * POST /api/v1/admin/billing/run
+ * Trigger a recurring-billing sweep on demand (same code path as node-cron).
+ *
+ * Body: { dry_run?: boolean, subscription_id?: number }
+ * When `dry_run` is omitted the AUTO_BILLING_DRY_RUN env default is used, so a
+ * production deployment stays in log-only mode unless explicitly overridden.
+ */
+router.post('/billing/run', async (req, res) => {
+  try {
+    const { runBillingCycle, logSummary } = require('../services/billing');
+    const { dry_run, subscription_id } = req.body || {};
+
+    const dryRun = typeof dry_run === 'boolean' ? dry_run : config.AUTO_BILLING.dryRun;
+    const subscriptionId = Number.parseInt(subscription_id, 10);
+
+    const summary = await runBillingCycle({
+      dryRun,
+      ...(Number.isInteger(subscriptionId) ? { subscriptionId } : {})
+    });
+
+    logSummary(summary);
+
+    return res.status(200).json({
+      status: 'success',
+      message: `${dryRun ? 'Dry run' : 'Billing run'} completed for ${summary.scanned} subscription(s).`,
+      data: summary
+    });
+  } catch (error) {
+    console.error('Error running billing cycle:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to run billing cycle.' });
+  }
+});
+
+/**
+ * GET /api/v1/admin/billing/periods?status=&take=
+ * Inspect the recurring-billing ledger (idempotency / dunning visibility).
+ */
+router.get('/billing/periods', async (req, res) => {
+  try {
+    const { status } = req.query;
+    const take = Math.min(Math.max(Number.parseInt(req.query.take, 10) || 50, 1), 200);
+
+    const validStatuses = ['Scheduled', 'Invoiced', 'Processing', 'Paid', 'Failed', 'Skipped'];
+    const where = {};
+    if (status) {
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          status: 'error',
+          message: `status must be one of: ${validStatuses.join(', ')}`
+        });
+      }
+      where.status = status;
+    }
+
+    const periods = await prisma.billingPeriod.findMany({
+      where,
+      take,
+      orderBy: [{ period_start: 'desc' }, { period_id: 'desc' }],
+      include: {
+        subscription: {
+          select: {
+            subscription_id: true,
+            plan_tier: true,
+            plan_status: true,
+            auto_renew: true,
+            user: { select: { user_id: true, email: true, username: true } }
+          }
+        },
+        invoice: { select: { invoice_id: true, invoice_status: true, total_amount: true } }
+      }
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        periods,
+        dry_run: config.AUTO_BILLING.dryRun,
+        cron: config.AUTO_BILLING.cron,
+        timezone: config.AUTO_BILLING.timezone
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching billing periods:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to retrieve billing periods.' });
   }
 });
 

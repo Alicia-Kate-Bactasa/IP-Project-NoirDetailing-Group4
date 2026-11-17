@@ -12,6 +12,57 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const validate = require('../middleware/validate');
 const { JWT_SECRET } = require('../config');
 const { z } = require('zod');
+const {
+  BOOKING_STATUSES,
+  RELEASED_STATUSES,
+  isBlockingStatus,
+  buildSlotLock,
+  addDaysClamped,
+  startOfDate
+} = require('../services/scheduling');
+const config = require('../config');
+
+const isUniqueViolation = (error) => error?.code === 'P2002';
+
+/**
+ * A member still has VIP booking rights while the plan is Active, while a
+ * cancellation is pending (perks run to the end of the paid period), or during
+ * the grace window after a failed renewal. A brand-new `Payment_Pending`
+ * subscription (never paid, no grace anchor) does NOT qualify.
+ */
+const hasVipAccess = (subscription) => {
+  if (!subscription) return false;
+  if (subscription.plan_status === 'Active' || subscription.plan_status === 'Cancellation_Pending') {
+    return true;
+  }
+  if (subscription.plan_status === 'Payment_Pending' && subscription.grace_period_start) {
+    const graceEnds = addDaysClamped(subscription.grace_period_start, config.AUTO_BILLING.graceDays);
+    return startOfDate(new Date()) <= graceEnds;
+  }
+  return false;
+};
+
+/**
+ * Finds a booking occupying the same bay + date + time slot.
+ * Uses the indexed slot_lock first and falls back to a status-based query so
+ * rows created before the lock column was introduced are still respected.
+ */
+const findSlotConflict = (tx, { scheduled_date, time_slot, bay_number, excludeBookingId }) =>
+  tx.booking.findFirst({
+    where: {
+      ...(excludeBookingId ? { booking_id: { not: excludeBookingId } } : {}),
+      OR: [
+        { slot_lock: buildSlotLock({ scheduled_date, time_slot, bay_number }) },
+        {
+          scheduled_date: new Date(scheduled_date),
+          time_slot,
+          bay_number,
+          booking_status: { notIn: RELEASED_STATUSES }
+        }
+      ]
+    },
+    select: { booking_id: true }
+  });
 
 // Zod validation schema for booking creation payload
 const createBookingSchema = z.object({
@@ -90,6 +141,8 @@ router.post('/member', requireAuth, async (req, res) => {
     }
 
     const serviceId = parseInt(service_id, 10);
+    const requestedBay = parseInt(req.body.bay_number, 10);
+    const bayNumber = Number.isInteger(requestedBay) && requestedBay > 0 ? requestedBay : 1;
 
     // Get the authenticated user
     const dbUser = await prisma.user.findUnique({
@@ -99,12 +152,14 @@ router.post('/member', requireAuth, async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'User account not found.' });
     }
 
-    // Verify user has an active subscription
+    // Verify the member still has VIP booking rights (Active, cancellation
+    // pending, or inside the post-failure grace window).
     const activeSub = await prisma.subscription.findFirst({
-      where: { user_id: dbUser.user_id, plan_status: 'Active' }
+      where: { user_id: dbUser.user_id },
+      orderBy: { subscription_id: 'desc' }
     });
 
-    if (!activeSub) {
+    if (!hasVipAccess(activeSub)) {
       return res.status(403).json({
         status: 'error',
         message: 'An active VIP subscription is required to reserve this appointment.'
@@ -116,17 +171,18 @@ router.post('/member', requireAuth, async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'Requested service package is inactive or not found.' });
     }
 
-    // Check slot collision
-    const existingConflict = await prisma.booking.findFirst({
-      where: {
-        scheduled_date: new Date(scheduled_date),
-        time_slot,
-        booking_status: { notIn: ['Cancelled', 'No_Show'] }
-      }
+    // Check slot collision in the requested bay (same rule as guest bookings)
+    const existingConflict = await findSlotConflict(prisma, {
+      scheduled_date,
+      time_slot,
+      bay_number: bayNumber
     });
 
     if (existingConflict) {
-      return res.status(409).json({ status: 'error', message: `Time slot ${time_slot} on ${scheduled_date} is already occupied.` });
+      return res.status(409).json({
+        status: 'error',
+        message: `Bay ${bayNumber} is already booked for ${time_slot} on ${scheduled_date}.`
+      });
     }
 
     const result = await prisma.$transaction(async (tx) => {
@@ -136,7 +192,8 @@ router.post('/member', requireAuth, async (req, res) => {
           service_id: serviceId,
           scheduled_date: new Date(scheduled_date),
           time_slot,
-          bay_number: 1,
+          bay_number: bayNumber,
+          slot_lock: buildSlotLock({ scheduled_date, time_slot, bay_number: bayNumber }),
           purchased_price: 0.00,
           booking_status: 'Confirmed'
         }
@@ -161,6 +218,12 @@ router.post('/member', requireAuth, async (req, res) => {
       data: result
     });
   } catch (error) {
+    if (isUniqueViolation(error)) {
+      return res.status(409).json({
+        status: 'error',
+        message: 'That bay and time slot was just reserved by someone else. Please pick another slot.'
+      });
+    }
     console.error('Error creating member booking:', error);
     return res.status(500).json({ status: 'error', message: 'Failed to reserve VIP booking session.' });
   }
@@ -279,13 +342,10 @@ router.post('/', validate(createBookingSchema), async (req, res) => {
     }
 
     // 2. Check for slot conflict in same bay
-    const existingConflict = await prisma.booking.findFirst({
-      where: {
-        scheduled_date: new Date(scheduled_date),
-        time_slot,
-        bay_number,
-        booking_status: { notIn: ['Cancelled', 'No_Show'] }
-      }
+    const existingConflict = await findSlotConflict(prisma, {
+      scheduled_date,
+      time_slot,
+      bay_number
     });
 
     if (existingConflict) {
@@ -347,6 +407,7 @@ router.post('/', validate(createBookingSchema), async (req, res) => {
           scheduled_date: new Date(scheduled_date),
           time_slot,
           bay_number: bay_number || 1,
+          slot_lock: buildSlotLock({ scheduled_date, time_slot, bay_number: bay_number || 1 }),
           purchased_price: purchasedPrice,
           booking_status: bookingStatus
         }
@@ -388,6 +449,12 @@ router.post('/', validate(createBookingSchema), async (req, res) => {
       }
     });
   } catch (error) {
+    if (isUniqueViolation(error)) {
+      return res.status(409).json({
+        status: 'error',
+        message: 'That bay and time slot was just reserved by someone else. Please pick another slot.'
+      });
+    }
     console.error('Error creating booking:', error);
     return res.status(500).json({
       status: 'error',
@@ -424,15 +491,13 @@ router.put('/:id/reschedule', requireAuth, async (req, res) => {
       }
     }
 
-    // Check slot collision
-    const collision = await prisma.booking.findFirst({
-      where: {
-        booking_id: { not: bookingId },
-        scheduled_date: new Date(scheduled_date),
-        time_slot,
-        bay_number: bay_number || booking.bay_number,
-        booking_status: { notIn: ['Cancelled', 'No_Show'] }
-      }
+    // Check slot collision (excluding the booking being moved)
+    const targetBay = bay_number || booking.bay_number;
+    const collision = await findSlotConflict(prisma, {
+      scheduled_date,
+      time_slot,
+      bay_number: targetBay,
+      excludeBookingId: bookingId
     });
 
     if (collision) {
@@ -447,7 +512,11 @@ router.put('/:id/reschedule', requireAuth, async (req, res) => {
       data: {
         scheduled_date: new Date(scheduled_date),
         time_slot,
-        ...(bay_number && { bay_number })
+        ...(bay_number && { bay_number }),
+        slot_lock: isBlockingStatus(booking.booking_status)
+          ? buildSlotLock({ scheduled_date, time_slot, bay_number: targetBay })
+          : null,
+        status_updated_at: new Date()
       },
       include: {
         service: true,
@@ -482,6 +551,9 @@ router.put('/:id/reschedule', requireAuth, async (req, res) => {
       data: updatedBooking
     });
   } catch (error) {
+    if (isUniqueViolation(error)) {
+      return res.status(409).json({ status: 'error', message: 'Selected time slot was just taken. Please choose another.' });
+    }
     console.error('Error rescheduling booking:', error);
     return res.status(500).json({ status: 'error', message: 'Failed to reschedule booking.' });
   }
@@ -515,7 +587,11 @@ router.put('/:id/cancel', requireAuth, async (req, res) => {
 
     const cancelledBooking = await prisma.booking.update({
       where: { booking_id: bookingId },
-      data: { booking_status: 'Cancelled' }
+      data: {
+        booking_status: 'Cancelled',
+        slot_lock: null,
+        status_updated_at: new Date()
+      }
     });
 
     // Mark invoice void if pending
@@ -563,9 +639,33 @@ router.put('/:id/status', requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'booking_status is required.' });
     }
 
+    if (!BOOKING_STATUSES.includes(booking_status)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `booking_status must be one of: ${BOOKING_STATUSES.join(', ')}`
+      });
+    }
+
+    const booking = await prisma.booking.findUnique({ where: { booking_id: bookingId } });
+    if (!booking) {
+      return res.status(404).json({ status: 'error', message: 'Booking not found.' });
+    }
+
+    // Keep the slot reservation in sync with the new status: Cancelled and
+    // No-Show release the bay, any other status re-acquires it.
     const updated = await prisma.booking.update({
       where: { booking_id: bookingId },
-      data: { booking_status }
+      data: {
+        booking_status,
+        status_updated_at: new Date(),
+        slot_lock: isBlockingStatus(booking_status)
+          ? buildSlotLock({
+              scheduled_date: booking.scheduled_date,
+              time_slot: booking.time_slot,
+              bay_number: booking.bay_number
+            })
+          : null
+      }
     });
 
     return res.status(200).json({
@@ -574,6 +674,12 @@ router.put('/:id/status', requireAuth, requireAdmin, async (req, res) => {
       data: updated
     });
   } catch (error) {
+    if (error?.code === 'P2002') {
+      return res.status(409).json({
+        status: 'error',
+        message: 'Cannot reactivate this booking: its bay and time slot are already taken.'
+      });
+    }
     console.error('Error updating booking status:', error);
     return res.status(500).json({ status: 'error', message: 'Failed to update booking status.' });
   }

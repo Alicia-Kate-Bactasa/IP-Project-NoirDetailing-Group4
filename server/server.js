@@ -9,7 +9,9 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const { PORT, ALLOWED_ORIGINS, isProduction, NODE_ENV } = require('./config');
+const swaggerUi = require('swagger-ui-express');
+const YAML = require('yaml');
+const { PORT, ALLOWED_ORIGINS, isProduction, NODE_ENV, AUTO_BILLING } = require('./config');
 
 // Route module imports
 const authRouter = require('./routes/auth');
@@ -68,6 +70,36 @@ app.get(`${API_PREFIX}/health`, (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// OpenAPI 3.0 contract + interactive Swagger UI.
+// The spec lives in server/openapi.yaml and is the single source of truth for
+// the REST surface. Set ENABLE_API_DOCS=false to hide it (e.g. locked-down deploy).
+// ---------------------------------------------------------------------------
+if (process.env.ENABLE_API_DOCS !== 'false') {
+  try {
+    const openApiPath = path.join(__dirname, 'openapi.yaml');
+    const openApiDocument = YAML.parse(fs.readFileSync(openApiPath, 'utf8'));
+
+    // Raw machine-readable contract (for codegen, Postman, CI schema checks)
+    app.get('/api-docs/openapi.json', (req, res) => res.json(openApiDocument));
+
+    // Interactive explorer
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiDocument, {
+      customSiteTitle: 'Noir Detailing API Docs',
+      swaggerOptions: {
+        persistAuthorization: true,
+        displayRequestDuration: true,
+        docExpansion: 'none',
+        filter: true
+      }
+    }));
+
+    console.log('📘 OpenAPI docs available at /api-docs (spec: /api-docs/openapi.json)');
+  } catch (docsError) {
+    console.warn('⚠️  OpenAPI documentation unavailable:', docsError.message);
+  }
+}
+
 // API v1 router mounts
 app.use(`${API_PREFIX}/auth`, authLimiter, authRouter);
 app.use(`${API_PREFIX}/services`, servicesRouter);
@@ -114,6 +146,15 @@ app.use((err, req, res, next) => {
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`🚀 Noir Detailing API Server running on http://localhost:${PORT} (${NODE_ENV})`);
+
+    // Daily recurring-billing sweep (node-cron, runs in the studio timezone).
+    // Defaults to DRY RUN so a fresh install never charges anybody by accident.
+    if (AUTO_BILLING.enabled) {
+      const { startBillingScheduler } = require('./services/billing');
+      startBillingScheduler();
+    } else {
+      console.log('[billing] Auto-billing disabled (AUTO_BILLING_ENABLED=false).');
+    }
   });
 }
 

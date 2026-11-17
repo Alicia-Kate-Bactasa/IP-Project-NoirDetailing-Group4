@@ -17,7 +17,9 @@ const envPaths = [
 ];
 for (const envPath of envPaths) {
   if (fs.existsSync(envPath)) {
-    dotenv.config({ path: envPath, override: true });
+    // Real environment variables win over .env (standard precedence, and it
+    // lets CI / Docker / tests override local development values).
+    dotenv.config({ path: envPath });
     break;
   }
 }
@@ -35,6 +37,20 @@ if (isProduction && !JWT_SECRET) {
   console.error('CRITICAL SECURITY WARNING: JWT_SECRET environment variable is missing in production!');
 }
 
+const toBool = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+};
+
+const toIntList = (value, fallback) => {
+  if (!value) return fallback;
+  const parts = String(value)
+    .split(',')
+    .map((part) => Number.parseInt(part.trim(), 10))
+    .filter((part) => Number.isFinite(part) && part >= 0);
+  return parts.length ? parts : fallback;
+};
+
 module.exports = {
   NODE_ENV,
   isProduction,
@@ -43,5 +59,27 @@ module.exports = {
   ALLOWED_ORIGINS: (process.env.ALLOWED_ORIGIN || '')
     .split(',')
     .map((origin) => origin.trim())
-    .filter(Boolean)
+    .filter(Boolean),
+
+  // PayMongo (server-side secret only; the public key lives in the SPA)
+  PAYMONGO_SECRET_KEY: (process.env.PAYMONGO_SECRET_KEY || '').trim(),
+
+  // Public origin of the SPA, used for links inside billing emails
+  PUBLIC_APP_URL: (process.env.PUBLIC_APP_URL || 'http://localhost:5173').replace(/\/+$/, ''),
+
+  // Recurring billing (Option C: card autopay where available, auto-invoice otherwise)
+  AUTO_BILLING: {
+    enabled: toBool(process.env.AUTO_BILLING_ENABLED, true),
+    // When true the job only logs what it would do - nothing is charged or written.
+    dryRun: toBool(process.env.AUTO_BILLING_DRY_RUN, true),
+    cron: process.env.AUTO_BILLING_CRON || '0 8 * * *',
+    timezone: process.env.BUSINESS_TIMEZONE || 'Asia/Manila',
+    monthlyFee: Number.parseFloat(process.env.SUBSCRIPTION_MONTHLY_FEE || '1500'),
+    // Days of continued VIP access after a failed/unpaid renewal before expiry
+    graceDays: Number.parseInt(process.env.AUTO_BILLING_GRACE_DAYS || '5', 10),
+    // Day offsets (since the billing date) at which a failed charge is retried
+    retryDays: toIntList(process.env.AUTO_BILLING_RETRY_DAYS, [0, 3, 7]),
+    // Reminder email sent this many days before the renewal date
+    reminderDays: Number.parseInt(process.env.AUTO_BILLING_REMINDER_DAYS || '3', 10)
+  }
 };
