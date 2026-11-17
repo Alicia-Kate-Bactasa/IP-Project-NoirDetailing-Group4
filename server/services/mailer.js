@@ -520,15 +520,22 @@ const sendMonthlySubscriptionPaymentEmail = async ({ to, clientName, subscriptio
 // ----------------------------------------------------------------------------
 // 13. User Cancels Subscription
 // ----------------------------------------------------------------------------
-const sendSubscriptionCancelledEmail = async ({ to, clientName, subscriptionId }) => {
+const sendSubscriptionCancelledEmail = async ({ to, clientName, subscriptionId, accessUntil }) => {
   const contentHtml = `
     <p style="font-size:14px; margin:0 0 16px 0; line-height:1.6; color:#333333;">
       Dear <strong>${esc(clientName || 'VIP Member')}</strong>,<br>
       Your Unlimited VIP Wash Club subscription (ID: SUB-${subscriptionId || 'VIP'}) has been cancelled as requested.
     </p>
 
+    <div style="background-color:#F8F9FA; border:1px solid #E5E5E5; padding:18px; border-radius:12px; margin:20px 0; font-size:13px; line-height:1.6;">
+      <strong>Status:</strong> Cancellation Pending<br>
+      <strong>VIP access ends:</strong> ${accessUntil || 'at the end of the current billing period'}<br>
+      <strong>Auto-renew:</strong> Disabled
+    </div>
+
     <p style="font-size:13px; color:#555555; line-height:1.6;">
-      We appreciate your support! You may reactivate your VIP membership at any time from your Member Workspace.
+      You keep every VIP perk until the date above, so you can still book complimentary sessions in the meantime.
+      Changed your mind? Reactivate from your Member Workspace at any time.
     </p>
   `;
 
@@ -537,7 +544,7 @@ const sendSubscriptionCancelledEmail = async ({ to, clientName, subscriptionId }
     subject: `VIP Subscription Cancelled — Noir Detailing`,
     htmlContent: renderWrapper({
       title: 'Subscription Cancelled',
-      statusBadge: 'CANCELLED',
+      statusBadge: 'CANCELLATION PENDING',
       statusColor: '#EF4444',
       contentHtml
     }),
@@ -574,6 +581,152 @@ const sendSubscriptionReactivatedEmail = async ({ to, clientName, subscriptionId
   });
 };
 
+// ----------------------------------------------------------------------------
+// 15. Recurring billing notices (Option C: card autopay + auto-invoice)
+// ----------------------------------------------------------------------------
+
+const renderBillingDetails = ({ subscriptionId, amount, lines = [] }) => `
+  <div style="background-color:#F8F9FA; border:1px solid #E5E5E5; padding:18px; border-radius:12px; margin:20px 0; font-size:13px; line-height:1.6;">
+    <strong>Subscription ID:</strong> SUB-${subscriptionId || 'VIP'}<br>
+    <strong>Monthly Rate:</strong> ₱${amount || '1,500'}.00<br>
+    ${lines.filter(Boolean).join('<br>')}
+  </div>
+`;
+
+const renderPayButton = (payUrl, label = 'Pay / Manage Membership') =>
+  payUrl
+    ? `<p style="margin:24px 0; text-align:center;">
+         <a href="${esc(payUrl)}" style="display:inline-block; background:#111111; color:#ffffff; text-decoration:none; font-weight:700; font-size:12px; letter-spacing:.08em; text-transform:uppercase; padding:14px 28px; border-radius:999px;">${esc(label)}</a>
+       </p>`
+    : '';
+
+const sendSubscriptionRenewalReminderEmail = async ({ to, clientName, subscriptionId, amount = '1,500', renewalDate, payUrl }) => {
+  const contentHtml = `
+    <p style="font-size:14px; margin:0 0 16px 0; line-height:1.6; color:#333333;">
+      Hi <strong>${esc(clientName || 'VIP Member')}</strong>,<br>
+      Your VIP membership renews on <strong>${esc(renewalDate)}</strong>. Auto-renew is enabled, so no action is required.
+    </p>
+
+    ${renderBillingDetails({
+      subscriptionId,
+      amount,
+      lines: [`<strong>Renewal Date:</strong> ${esc(renewalDate)}`]
+    })}
+
+    <p style="font-size:13px; color:#555555; line-height:1.6;">
+      Need to update your card or turn auto-renew off? You can do both from your Member Workspace.
+    </p>
+
+    ${renderPayButton(payUrl, 'Manage Membership')}
+  `;
+
+  return sendMailHelper({
+    to,
+    subject: `Your Noir Detailing VIP membership renews on ${renewalDate}`,
+    htmlContent: renderWrapper({
+      title: 'Upcoming Renewal',
+      statusBadge: 'RENEWAL REMINDER',
+      statusColor: '#3B82F6',
+      contentHtml
+    }),
+    tag: 'Subscription Renewal Reminder'
+  });
+};
+
+const sendSubscriptionInvoiceReadyEmail = async ({ to, clientName, subscriptionId, invoiceId, amount = '1,500', dueDate, payUrl }) => {
+  const contentHtml = `
+    <p style="font-size:14px; margin:0 0 16px 0; line-height:1.6; color:#333333;">
+      Hi <strong>${esc(clientName || 'VIP Member')}</strong>,<br>
+      Your VIP membership renewal invoice <strong>INV-${invoiceId}</strong> is ready. Please settle it on or before <strong>${esc(dueDate)}</strong> to keep your perks.
+    </p>
+
+    ${renderRefCard({ bookingId: null, invoiceId, clientName })}
+
+    ${renderBillingDetails({
+      subscriptionId,
+      amount,
+      lines: [`<strong>Pay on or before:</strong> ${esc(dueDate)}`]
+    })}
+
+    ${renderPayButton(payUrl, 'Pay ₱' + amount)}
+  `;
+
+  return sendMailHelper({
+    to,
+    subject: `VIP Membership Renewal Invoice INV-${invoiceId} — Noir Detailing`,
+    htmlContent: renderWrapper({
+      title: 'Renewal Invoice Ready',
+      statusBadge: 'PAYMENT DUE',
+      statusColor: '#F59E0B',
+      contentHtml
+    }),
+    tag: 'Subscription Invoice Ready'
+  });
+};
+
+const sendSubscriptionPaymentFailedEmail = async ({ to, clientName, subscriptionId, amount = '1,500', reason, graceEndsAt, payUrl }) => {
+  const contentHtml = `
+    <p style="font-size:14px; margin:0 0 16px 0; line-height:1.6; color:#333333;">
+      Hi <strong>${esc(clientName || 'VIP Member')}</strong>,<br>
+      We could not process your ₱${amount}.00 VIP membership renewal automatically.
+    </p>
+
+    ${renderBillingDetails({
+      subscriptionId,
+      amount,
+      lines: [
+        reason ? `<strong>Reason:</strong> ${esc(reason)}` : null,
+        graceEndsAt ? `<strong>Perks remain active until:</strong> ${esc(graceEndsAt)}` : null
+      ]
+    })}
+
+    <p style="font-size:13px; color:#555555; line-height:1.6;">
+      Update your card or settle the invoice from your Member Workspace to avoid losing VIP access.
+    </p>
+
+    ${renderPayButton(payUrl, 'Update / Pay Now')}
+  `;
+
+  return sendMailHelper({
+    to,
+    subject: `Action needed: VIP membership payment failed — Noir Detailing`,
+    htmlContent: renderWrapper({
+      title: 'Payment Failed',
+      statusBadge: 'PAYMENT FAILED',
+      statusColor: '#EF4444',
+      contentHtml
+    }),
+    tag: 'Subscription Payment Failed'
+  });
+};
+
+const sendSubscriptionExpiredEmail = async ({ to, clientName, subscriptionId, amount = '1,500', payUrl }) => {
+  const contentHtml = `
+    <p style="font-size:14px; margin:0 0 16px 0; line-height:1.6; color:#333333;">
+      Hi <strong>${esc(clientName || 'VIP Member')}</strong>,<br>
+      Your VIP membership (SUB-${subscriptionId || 'VIP'}) has expired because the renewal was not completed.
+    </p>
+
+    <p style="font-size:13px; color:#555555; line-height:1.6;">
+      You can restore unlimited booking at any time — your history and feedback stay on file.
+    </p>
+
+    ${renderPayButton(payUrl, 'Reactivate Membership')}
+  `;
+
+  return sendMailHelper({
+    to,
+    subject: `Your Noir Detailing VIP membership has expired`,
+    htmlContent: renderWrapper({
+      title: 'Membership Expired',
+      statusBadge: 'EXPIRED',
+      statusColor: '#6B7280',
+      contentHtml
+    }),
+    tag: 'Subscription Expired'
+  });
+};
+
 module.exports = {
   sendPaymentSuccessInvoiceEmail,
   sendBookingCompletedEmail,
@@ -589,6 +742,10 @@ module.exports = {
   sendMonthlySubscriptionPaymentEmail,
   sendSubscriptionCancelledEmail,
   sendSubscriptionReactivatedEmail,
+  sendSubscriptionRenewalReminderEmail,
+  sendSubscriptionInvoiceReadyEmail,
+  sendSubscriptionPaymentFailedEmail,
+  sendSubscriptionExpiredEmail,
   // Backward compatibility alias:
   sendInvoiceEmail: sendPaymentSuccessInvoiceEmail,
   sendOtpEmail: sendPasswordResetOtpEmail
